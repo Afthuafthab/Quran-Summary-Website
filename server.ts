@@ -7,9 +7,10 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Ensure ESM paths are handled correctly
-const __filename = new URL(import.meta.url).pathname;
-const __dirname = path.dirname(__filename);
+// Ensure ESM paths are handled correctly across both ESM and CommonJS
+const isESM = typeof import.meta !== "undefined" && typeof import.meta.url !== "undefined";
+const resolvedFilename = isESM ? fileURLToPath(import.meta.url) : (typeof __filename !== "undefined" ? __filename : "");
+const resolvedDirname = isESM ? path.dirname(resolvedFilename) : (typeof __dirname !== "undefined" ? __dirname : "");
 
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
