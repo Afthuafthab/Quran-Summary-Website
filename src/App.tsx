@@ -880,31 +880,31 @@ export default function App() {
     >
       
       {/* Top Banner/Header */}
-      <header className="sticky top-0 z-30 bg-bg-header border-b border-border-main shadow-md py-4 px-4 md:px-8 transition-colors duration-300">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-30 bg-bg-header border-b border-border-main shadow-md py-3 sm:py-4 px-3 sm:px-4 md:px-8 transition-colors duration-300">
+        <div className="max-w-7xl mx-auto flex justify-between items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
             <button 
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg hover:bg-bg-card transition-colors"
+              className="md:hidden p-1.5 rounded-lg hover:bg-bg-card transition-colors shrink-0"
             >
-              <Menu className="w-6 h-6 text-accent-main" />
+              <Menu className="w-5 h-5 sm:w-6 sm:h-6 text-accent-main" />
             </button>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full border-2 border-accent-main flex items-center justify-center text-accent-main font-serif font-bold text-xl">
+            <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full border-2 border-accent-main flex items-center justify-center text-accent-main font-serif font-bold text-sm sm:text-xl shrink-0">
                 ഖ
               </div>
-              <h1 className="text-xl md:text-2xl font-bold text-text-title font-serif tracking-tight">
+              <h1 className="text-xs xs:text-sm sm:text-lg md:text-2xl font-bold text-text-title font-serif tracking-tight truncate">
                 ഖുർആൻ സംക്ഷിപ്ത അവലോകനം
               </h1>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             {/* Theme Selector */}
-            <div className="flex items-center gap-1.5 bg-bg-subcard border border-border-main p-1 rounded-full text-xs">
+            <div className="flex items-center gap-0.5 sm:gap-1.5 bg-bg-subcard border border-border-main p-0.5 sm:p-1 rounded-full text-[10px] sm:text-xs">
               <button
                 onClick={() => handleThemeChange("midnight")}
-                className={`px-3 py-1.5 rounded-full font-bold transition-all cursor-pointer text-[11px] ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-full font-bold transition-all cursor-pointer text-[9px] sm:text-[11px] ${
                   theme === "midnight" 
                     ? "bg-accent-main text-black shadow-sm font-extrabold" 
                     : "text-text-muted hover:text-text-title"
@@ -914,7 +914,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => handleThemeChange("white")}
-                className={`px-3 py-1.5 rounded-full font-bold transition-all cursor-pointer text-[11px] ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-full font-bold transition-all cursor-pointer text-[9px] sm:text-[11px] ${
                   theme === "white" 
                     ? "bg-accent-main text-black shadow-sm font-extrabold" 
                     : "text-text-muted hover:text-text-title"
@@ -926,10 +926,11 @@ export default function App() {
 
             <button 
               onClick={() => setShowScholarChat(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-accent-main text-black hover:bg-opacity-90 rounded-full text-xs font-semibold shadow-sm transition-all transform active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-accent-main text-black hover:bg-opacity-90 rounded-full text-[9px] sm:text-xs font-semibold shadow-sm transition-all transform active:scale-95 cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              Ask Scholar
+              <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden xs:inline">Ask Scholar</span>
+              <span className="xs:hidden">Ask</span>
             </button>
           </div>
         </div>
@@ -937,6 +938,19 @@ export default function App() {
 
       <div className="flex flex-1 max-w-7xl w-full mx-auto relative">
         
+        {/* Sidebar Mobile Backdrop */}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black z-35 md:hidden"
+            />
+          )}
+        </AnimatePresence>
+
         {/* Sidebar Navigation */}
         <aside className={`fixed inset-y-0 left-0 transform ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 transition-transform duration-300 ease-in-out md:sticky md:top-[73px] md:h-[calc(100vh-73px)] md:overflow-y-auto md:flex flex-col w-64 bg-bg-sidebar border-r border-border-main p-6 z-40 md:z-20 transition-colors duration-300`}>
           <div className="mb-8">
@@ -1218,7 +1232,7 @@ export default function App() {
               <div 
                 onMouseEnter={() => setIsCarouselPaused(true)}
                 onMouseLeave={() => setIsCarouselPaused(false)}
-                className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-bg-subcard to-bg-sidebar text-text-body p-8 md:p-10 shadow-lg border border-border-main transition-colors duration-300"
+                className="relative overflow-hidden rounded-2xl sm:rounded-[2rem] bg-gradient-to-br from-bg-subcard to-bg-sidebar text-text-body p-5 sm:p-8 md:p-10 shadow-lg border border-border-main transition-colors duration-300"
               >
                 {/* Background watermark */}
                 <div className="absolute right-0 bottom-0 opacity-5 translate-y-8 translate-x-8 pointer-events-none">
@@ -1256,10 +1270,10 @@ export default function App() {
                       transition={{ duration: 0.4 }}
                       className="space-y-4"
                     >
-                      <p className="text-3xl md:text-4xl leading-relaxed text-right font-serif mb-6 text-text-title tracking-wide" dir="rtl">
+                      <p className="text-2xl sm:text-3xl md:text-4xl leading-relaxed text-right font-serif mb-6 text-text-title tracking-wide" dir="rtl">
                         {INSPIRATIONAL_SLIDES[activeSlide].arabic}
                       </p>
-                      <p className="text-base md:text-lg font-medium italic opacity-95 mb-4 leading-relaxed text-text-body">
+                      <p className="text-sm sm:text-base md:text-lg font-medium italic opacity-95 mb-4 leading-relaxed text-text-body">
                         &ldquo;{INSPIRATIONAL_SLIDES[activeSlide].malayalam}&rdquo;
                       </p>
                       <div className="flex items-center justify-between text-xs font-bold text-accent-main uppercase tracking-wider border-b border-border-main/50 pb-4">
@@ -1358,7 +1372,7 @@ export default function App() {
                   ലഭ്യമായ സൂറത്തുകൾ (Surah Directory)
                 </h3>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {filteredSurahs.map((surah) => {
                     const progress = getSurahProgress(surah);
                     return (
@@ -1366,7 +1380,7 @@ export default function App() {
                         whileHover={{ y: -4 }}
                         key={surah.id}
                         onClick={() => setSelectedSurah(surah)}
-                        className="bg-bg-card rounded-2xl p-6 shadow-sm border border-border-main hover:border-accent-main/50 cursor-pointer transition-all flex flex-col justify-between hover:shadow-md"
+                        className="bg-bg-card rounded-2xl p-5 sm:p-6 shadow-sm border border-border-main hover:border-accent-main/50 cursor-pointer transition-all flex flex-col justify-between hover:shadow-md"
                       >
                         <div>
                           <div className="flex justify-between items-start mb-4">
@@ -1438,17 +1452,17 @@ export default function App() {
               </button>
 
               {/* Surah Header Card */}
-              <div className="bg-bg-card rounded-3xl p-8 border border-border-main text-center relative overflow-hidden transition-colors duration-300">
+              <div className="bg-bg-card rounded-2xl sm:rounded-3xl p-5 sm:p-8 border border-border-main text-center relative overflow-hidden transition-colors duration-300">
                 <span className="text-xs font-bold bg-accent-main/10 border border-accent-main/30 text-accent-main px-3 py-1.5 rounded-full uppercase tracking-wider">
                   SURA {selectedSurah.id}
                 </span>
-                <h2 className="text-3xl font-bold text-text-title mt-3 mb-1 font-serif">{selectedSurah.name}</h2>
-                <p className="text-sm text-text-muted mb-4">{selectedSurah.translation} • {selectedSurah.revelation}</p>
-                <p className="text-base text-text-body max-w-xl mx-auto leading-relaxed">{selectedSurah.description}</p>
+                <h2 className="text-2xl sm:text-3xl font-bold text-text-title mt-3 mb-1 font-serif">{selectedSurah.name}</h2>
+                <p className="text-xs sm:text-sm text-text-muted mb-4">{selectedSurah.translation} • {selectedSurah.revelation}</p>
+                <p className="text-sm sm:text-base text-text-body max-w-xl mx-auto leading-relaxed">{selectedSurah.description}</p>
               </div>
 
               {/* AI Audio Companion (ശബ്ദ വായനാ സഹായി) */}
-              <div id="ai-audio-companion" className="bg-bg-card rounded-3xl p-6 md:p-8 border border-border-main relative overflow-hidden shadow-sm space-y-6 transition-colors duration-300">
+              <div id="ai-audio-companion" className="bg-bg-card rounded-2xl sm:rounded-3xl p-5 sm:p-8 border border-border-main relative overflow-hidden shadow-sm space-y-6 transition-colors duration-300">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-accent-main/5 rounded-full blur-2xl pointer-events-none" />
                 
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border-main/50">
@@ -1524,7 +1538,7 @@ export default function App() {
                         <button
                           key={item.value}
                           onClick={() => setReadingSpeed(item.value)}
-                          className={`flex-1 py-2 px-1 text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
+                          className={`flex-1 py-2 px-1 text-[10px] sm:text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
                             readingSpeed === item.value
                               ? "bg-accent-main/10 border-accent-main text-accent-light font-extrabold"
                               : "bg-bg-subcard border-border-main text-text-muted hover:text-text-title"
@@ -1547,33 +1561,33 @@ export default function App() {
                         വായിക്കുക (Play AI)
                       </button>
                     ) : (
-                      <div className="flex gap-3 w-full md:w-auto">
+                      <div className="flex gap-2 sm:gap-3 w-full md:w-auto">
                         {isPaused ? (
                           <button
                             onClick={resumeSpeaking}
-                            className="flex-1 md:flex-none min-w-[120px] flex items-center justify-center gap-2 px-5 py-3 bg-accent-main text-black font-extrabold text-xs rounded-full shadow-md transition-all active:scale-95 cursor-pointer select-none"
+                            className="flex-1 md:flex-none min-w-0 sm:min-w-[120px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 sm:py-3 bg-accent-main text-black font-extrabold text-[11px] sm:text-xs rounded-full shadow-md transition-all active:scale-95 cursor-pointer select-none"
                           >
-                            <Play className="w-4 h-4 fill-current" />
+                            <Play className="w-3.5 h-3.5 fill-current shrink-0" />
                             തുടരുക (Resume)
                           </button>
                         ) : (
                           <button
                             onClick={pauseSpeaking}
-                            className="flex-1 md:flex-none min-w-[120px] flex items-center justify-center gap-2 px-5 py-3 bg-bg-subcard border border-border-main hover:bg-bg-card text-text-body font-bold text-xs rounded-full transition-all active:scale-95 cursor-pointer select-none"
+                            className="flex-1 md:flex-none min-w-0 sm:min-w-[120px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 sm:py-3 bg-bg-subcard border border-border-main hover:bg-bg-card text-text-body font-bold text-[11px] sm:text-xs rounded-full transition-all active:scale-95 cursor-pointer select-none"
                           >
-                            <Pause className="w-4 h-4" />
+                            <Pause className="w-3.5 h-3.5 shrink-0" />
                             നിർത്തുക (Pause)
                           </button>
                         )}
                         <button
                           onClick={stopSpeaking}
-                          className={`flex-1 md:flex-none min-w-[100px] flex items-center justify-center gap-2 px-5 py-3 font-bold text-xs rounded-full transition-all active:scale-95 cursor-pointer select-none ${
+                          className={`flex-1 md:flex-none min-w-0 sm:min-w-[100px] flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 sm:py-3 font-bold text-[11px] sm:text-xs rounded-full transition-all active:scale-95 cursor-pointer select-none ${
                             theme === "midnight"
                               ? "bg-red-950/40 border border-red-900/50 hover:bg-red-950/60 text-red-400"
                               : "bg-red-50 border border-red-200 hover:bg-red-100 text-red-600"
                           }`}
                         >
-                          <Square className="w-3.5 h-3.5 fill-current" />
+                          <Square className="w-3 h-3 fill-current shrink-0" />
                           നിർത്തുക (Stop)
                         </button>
                       </div>
@@ -1586,25 +1600,27 @@ export default function App() {
               <div className="flex gap-2 p-1.5 bg-bg-subcard border border-border-main rounded-2xl max-w-lg mx-auto md:mx-0 transition-colors duration-300">
                 <button
                   onClick={() => setSurahTab("summary")}
-                  className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  className={`flex-1 py-2 sm:py-2.5 px-2 sm:px-4 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
                     surahTab === "summary"
                       ? "bg-accent-main text-black shadow-md font-extrabold"
                       : "text-text-muted hover:text-text-title hover:bg-bg-card"
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  പണ്ഡിത അവലോകനം (Scholarly Summary)
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden xs:inline">പണ്ഡിത അവലോകനം (Scholarly Summary)</span>
+                  <span className="xs:hidden">അവലോകനം (Summary)</span>
                 </button>
                 <button
                   onClick={() => setSurahTab("manuscript")}
-                  className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  className={`flex-1 py-2 sm:py-2.5 px-2 sm:px-4 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
                     surahTab === "manuscript"
                       ? "bg-accent-main text-black shadow-md font-extrabold"
                       : "text-text-muted hover:text-text-title hover:bg-bg-card"
                   }`}
                 >
-                  <BookOpen className="w-3.5 h-3.5" />
-                  കയ്യെഴുത്തുപ്രതി അവലോകനങ്ങൾ ({selectedSurah.availableKeys.length})
+                  <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden xs:inline">കയ്യെഴുത്തുപ്രതി അവലോകനങ്ങൾ ({selectedSurah.availableKeys.length})</span>
+                  <span className="xs:hidden">വചനങ്ങൾ ({selectedSurah.availableKeys.length})</span>
                 </button>
               </div>
 
@@ -1620,7 +1636,7 @@ export default function App() {
                       className="space-y-8"
                     >
                       {/* Introduction */}
-                      <div className="bg-bg-card rounded-3xl p-6 md:p-8 border border-border-main space-y-4 transition-colors duration-300">
+                      <div className="bg-bg-card rounded-3xl p-5 sm:p-6 md:p-8 border border-border-main space-y-4 transition-colors duration-300">
                         <h3 className="text-lg font-bold text-text-title flex items-center gap-2 font-serif">
                           <Info className="w-5 h-5 text-accent-main" />
                           അധ്യായ പരിചയം (Introduction)
@@ -1641,7 +1657,7 @@ export default function App() {
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {surahSummary.keyThemes.map((themeObj: any, index: number) => (
-                            <div key={index} className="bg-bg-card rounded-2xl p-6 border border-border-main space-y-2 flex flex-col justify-between transition-colors duration-300">
+                            <div key={index} className="bg-bg-card rounded-2xl p-5 sm:p-6 border border-border-main space-y-2 flex flex-col justify-between transition-colors duration-300">
                               <div>
                                 <span className="text-[10px] font-bold text-accent-main/80 uppercase tracking-wider">വിഷയം {index + 1}</span>
                                 <h4 className="text-base font-bold text-text-title font-serif mt-1 mb-2">{themeObj.theme}</h4>
@@ -1660,7 +1676,7 @@ export default function App() {
                         </h3>
                         <div className="grid grid-cols-1 gap-6">
                           {surahSummary.notableVerses.map((verseObj: any, index: number) => (
-                            <div key={index} className="bg-bg-card rounded-2xl p-6 md:p-8 border border-border-main space-y-3 transition-colors duration-300">
+                            <div key={index} className="bg-bg-card rounded-2xl p-5 sm:p-6 md:p-8 border border-border-main space-y-3 transition-colors duration-300">
                               <div className="flex items-center gap-2">
                                 <span className="px-2.5 py-1 rounded bg-accent-main/10 border border-accent-main/20 text-xs font-bold text-accent-main">
                                   സൂറത്ത് {selectedSurah.id}: {verseObj.verseRange}
@@ -1678,7 +1694,7 @@ export default function App() {
                       </div>
 
                       {/* Practical Lessons */}
-                      <div className="bg-bg-card rounded-3xl p-6 md:p-8 border border-border-main space-y-4 transition-colors duration-300">
+                      <div className="bg-bg-card rounded-3xl p-5 sm:p-6 md:p-8 border border-border-main space-y-4 transition-colors duration-300">
                         <h3 className="text-lg font-bold text-text-title flex items-center gap-2 font-serif">
                           <Heart className="w-5 h-5 text-accent-main" />
                           നമുക്കുള്ള പാഠങ്ങൾ (Practical Lessons)
@@ -1696,7 +1712,7 @@ export default function App() {
                       </div>
 
                       {/* Conclusion */}
-                      <div className="bg-gradient-to-br from-bg-card to-bg-subcard rounded-3xl p-6 md:p-8 border border-border-main text-center space-y-3 transition-colors duration-300">
+                      <div className="bg-gradient-to-br from-bg-card to-bg-subcard rounded-3xl p-5 sm:p-6 md:p-8 border border-border-main text-center space-y-3 transition-colors duration-300">
                         <span className="text-xs uppercase tracking-wider text-accent-main font-bold">ആത്മീയ ചിന്ത (Spiritual Summary)</span>
                         <p 
                           style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.8" }}
@@ -1707,7 +1723,7 @@ export default function App() {
                       </div>
 
                       {/* Summary Read Toggle */}
-                      <div className="bg-bg-card rounded-3xl p-6 border border-border-main flex flex-col md:flex-row justify-between items-center gap-4 transition-colors duration-300">
+                      <div className="bg-bg-card rounded-3xl p-5 sm:p-6 border border-border-main flex flex-col md:flex-row justify-between items-center gap-4 transition-colors duration-300">
                         <div className="space-y-1 text-center md:text-left">
                           <h4 className="text-base font-bold text-text-title font-serif">സംഗ്രഹം വായിച്ചുതീർത്തോ? (Read the summary?)</h4>
                           <p className="text-xs text-text-muted font-serif">സമ്പൂർണ്ണ പണ്ഡിത സംഗ്രഹം വായിച്ചതായി അടയാളപ്പെടുത്തുക. ഇത് നിങ്ങളുടെ പഠന പുരോഗതിയിൽ രേഖപ്പെടുത്തുന്നതാണ്.</p>
@@ -1754,7 +1770,7 @@ export default function App() {
                         <div 
                           key={key}
                           id={`verse-card-${key}`}
-                          className={`rounded-2xl p-6 md:p-8 border shadow-sm space-y-6 transition-all hover:shadow-md relative ${
+                          className={`rounded-2xl p-5 sm:p-6 md:p-8 border shadow-sm space-y-5 sm:space-y-6 transition-all hover:shadow-md relative ${
                             isRead
                               ? theme === "midnight"
                                 ? "bg-green-950/5 border-green-900/30"
@@ -1872,7 +1888,7 @@ export default function App() {
               )}
 
               {/* Bottom Sticky Controls Dock */}
-              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-bg-subcard border border-border-main shadow-xl rounded-2xl px-6 py-3 flex gap-6 items-center z-30">
+              <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-bg-subcard border border-border-main shadow-xl rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3 flex gap-3 sm:gap-6 items-center z-30 w-[92%] sm:w-auto justify-between sm:justify-start">
                 <button 
                   onClick={() => setEssenceVisible(!essenceVisible)}
                   className={`flex flex-col items-center gap-0.5 group transition-colors cursor-pointer ${essenceVisible ? "text-accent-main" : "text-text-submuted"}`}
@@ -1938,7 +1954,7 @@ export default function App() {
                     return (
                       <div 
                         key={key}
-                        className="bg-bg-card rounded-2xl p-6 border border-border-main shadow-sm space-y-4 relative transition-colors duration-300"
+                        className="bg-bg-card rounded-2xl p-5 sm:p-6 border border-border-main shadow-sm space-y-4 relative transition-colors duration-300"
                       >
                         <div className="flex justify-between items-center border-b border-border-main pb-2">
                           <span className="text-xs font-bold text-text-muted">SURA {verse.surah} • AYAH {key}</span>
@@ -2086,11 +2102,11 @@ export default function App() {
               className="fixed inset-y-0 right-0 max-w-md w-full bg-bg-app shadow-2xl border-l border-border-main z-50 flex flex-col justify-between transition-colors duration-300"
             >
               {/* Chat Header */}
-              <div className="p-4 bg-bg-sidebar border-b border-border-main text-text-title flex justify-between items-center transition-colors duration-300">
+              <div className="p-3.5 sm:p-4 bg-bg-sidebar border-b border-border-main text-text-title flex justify-between items-center transition-colors duration-300">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-accent-main" />
+                  <Sparkles className="w-5 h-5 text-accent-main shrink-0" />
                   <div>
-                    <h3 className="font-bold text-sm">സ്കോളർ അസിസ്റ്റന്റ് (Ask Scholar)</h3>
+                    <h3 className="font-bold text-xs sm:text-sm">സ്കോളർ അസിസ്റ്റന്റ് (Ask Scholar)</h3>
                     <p className="text-[10px] text-text-muted opacity-80">
                       {scholarLanguage === "english" ? "Scholarly insights based on manuscript" : "കയ്യെഴുത്തുപ്രതിയെ അടിസ്ഥാനമാക്കിയുള്ള മറുപടികൾ"}
                     </p>
@@ -2125,13 +2141,13 @@ export default function App() {
               </div>
 
               {/* Chat Messages */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-4">
+              <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto space-y-4">
                 {chatHistory.map((msg, index) => (
                   <div 
                     key={index}
                     className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <div className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-sm ${
+                    <div className={`max-w-[88%] sm:max-w-[85%] rounded-2xl p-3 sm:p-4 text-[13px] sm:text-sm leading-relaxed shadow-sm ${
                       msg.sender === "user" 
                         ? "bg-accent-main text-black rounded-br-none font-medium" 
                         : "bg-bg-card border border-border-main text-text-body rounded-bl-none transition-colors duration-300"
@@ -2164,9 +2180,9 @@ export default function App() {
                   <motion.div 
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="flex justify-start"
+                    className="flex justify-start w-full"
                   >
-                    <div className="bg-bg-card border border-border-main rounded-2xl rounded-bl-none p-5 w-full max-w-[85%] space-y-4 shadow-sm transition-colors duration-300">
+                    <div className="bg-bg-card border border-border-main rounded-2xl rounded-bl-none p-4 sm:p-5 w-full max-w-[90%] sm:max-w-[85%] space-y-4 shadow-sm transition-colors duration-300">
                       <p className="text-xs text-text-title font-sans font-semibold tracking-wide">
                         Choose conversation language / സംഭാഷണ ഭാഷ തിരഞ്ഞെടുക്കുക:
                       </p>
@@ -2208,7 +2224,7 @@ export default function App() {
               </div>
 
               {/* Chat Input */}
-              <div className="p-4 bg-bg-subcard border-t border-border-main flex gap-2 transition-colors duration-300">
+              <div className="p-3 sm:p-4 bg-bg-subcard border-t border-border-main flex gap-1.5 sm:gap-2 transition-colors duration-300">
                 <input
                   type="text"
                   placeholder={
@@ -2222,7 +2238,7 @@ export default function App() {
                   disabled={scholarLanguage === null || isQuerying}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && scholarLanguage) handleScholarQuery(chatInput); }}
-                  className="flex-1 bg-bg-card border border-border-main rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent-main/30 text-text-title placeholder:text-text-muted/60 transition-colors duration-300 disabled:opacity-50"
+                  className="flex-1 bg-bg-card border border-border-main rounded-xl px-3 py-2 sm:py-2.5 text-[13px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent-main/30 text-text-title placeholder:text-text-muted/60 transition-colors duration-300 disabled:opacity-50"
                 />
                 <button 
                   onClick={() => handleScholarQuery(chatInput)}
