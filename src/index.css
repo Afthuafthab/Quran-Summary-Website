@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Noto+Serif+Malayalam:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-serif: "Noto Serif Malayalam", "Playfair Display", serif;
+  --color-bg-app: var(--bg-app);
+  --color-bg-header: var(--bg-header);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-card: var(--bg-card);
+  --color-bg-subcard: var(--bg-subcard);
+  --color-border-main: var(--border-main);
+  --color-text-title: var(--text-title);
+  --color-text-body: var(--text-body);
+  --color-text-muted: var(--text-muted);
+  --color-text-submuted: var(--text-submuted);
+  --color-accent-main: var(--color-accent);
+  --color-accent-light: var(--color-accent-light);
+}
+
+html, body, #root {
+  background-color: var(--bg-app);
+  color: var(--text-body);
+  transition: background-color 300ms ease, color 300ms ease;
+  min-height: 100vh;
+}
+
+@keyframes wave-grow {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-wave-1 {
+  animation: wave-grow 1s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+.animate-wave-2 {
+  animation: wave-grow 1s ease-in-out infinite;
+  animation-delay: 0.2s;
+  transform-origin: bottom;
+}
+
+.animate-wave-3 {
+  animation: wave-grow 1s ease-in-out infinite;
+  animation-delay: 0.4s;
+  transform-origin: bottom;
+}

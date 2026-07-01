@@ -1,0 +1,6 @@
+{
+  "name": "Quran Summary",
+  "description": "An intelligent, compassionate, and scholarly Quran Summary platform in Malayalam.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
