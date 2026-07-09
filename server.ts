@@ -39,6 +39,24 @@ async function startServer() {
     if (surahId) {
       const filtered: Record<string, any> = {};
       for (const [key, val] of Object.entries(quranData)) {
+        // Skip introduction verses for Surah-wise rendering
+        if (val.context_chapter === "ആമുഖം (Introduction)") {
+          continue;
+        }
+
+        // Match "അധ്യായം N" or "അദ്ധ്യായം N" to Surah ID
+        if (val.context_chapter) {
+          const cleanContext = val.context_chapter.trim();
+          const chapterMatch = cleanContext.match(/^(?:അധ്യായം|അദ്ധ്യായം)\s*(\d+)$/);
+          if (chapterMatch) {
+            const chapNum = parseInt(chapterMatch[1], 10);
+            if (chapNum === surahId) {
+              filtered[key] = val;
+              continue;
+            }
+          }
+        }
+
         if (val.surah === surahId) {
           filtered[key] = val;
         }
@@ -76,7 +94,24 @@ async function startServer() {
     const surahs = allSurahs.map((s) => {
       // Find available keys in quranData dynamically
       const availableKeys = Object.entries(quranData)
-        .filter(([key, val]) => val.surah === s.id || val.context_chapter === s.nameMal)
+        .filter(([key, val]) => {
+          // Skip introduction verses from being mapped to Surahs
+          if (val.context_chapter === "ആമുഖം (Introduction)") {
+            return false;
+          }
+
+          // Check if context_chapter is "അധ്യായം N" or "അദ്ധ്യായം N"
+          if (val.context_chapter) {
+            const cleanContext = val.context_chapter.trim();
+            const chapterMatch = cleanContext.match(/^(?:അധ്യായം|അദ്ധ്യായം)\s*(\d+)$/);
+            if (chapterMatch) {
+              const chapNum = parseInt(chapterMatch[1], 10);
+              return chapNum === s.id;
+            }
+          }
+
+          return val.surah === s.id || val.context_chapter === s.nameMal;
+        })
         .map(([key, val]) => key);
 
       return {
@@ -365,7 +400,7 @@ Structure the response exactly as a JSON object with:
     }
   });
 
-  // Free Malayalam Text-To-Speech Proxy using Google Translate TTS
+  // Free Malayalam Text-To-Speech Proxy using Google Translate TTS with support for longer text via chunking
   app.get("/api/tts", async (req, res) => {
     const text = req.query.text as string;
     if (!text) {
@@ -373,25 +408,74 @@ Structure the response exactly as a JSON object with:
     }
 
     try {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ml&client=tw-ob&q=${encodeURIComponent(text)}`;
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Referer": "https://translate.google.com/"
-        }
-      });
+      // Clean and truncate text to a maximum of 1500 characters to prevent abuse or excessively long requests
+      const truncatedText = text.substring(0, 1500);
 
-      if (!response.ok) {
-        throw new Error(`Google TTS responded with status ${response.status}`);
+      // Helper function to split text into chunks of maximum 160 characters
+      const splitTextIntoChunks = (str: string, maxLength = 160): string[] => {
+        const cleaned = str.replace(/\s+/g, " ").trim();
+        if (cleaned.length <= maxLength) {
+          return [cleaned];
+        }
+
+        const words = cleaned.split(" ");
+        const chunks: string[] = [];
+        let currentChunk = "";
+
+        for (const word of words) {
+          if ((currentChunk + " " + word).trim().length > maxLength) {
+            if (currentChunk.trim()) {
+              chunks.push(currentChunk.trim());
+            }
+            currentChunk = word;
+          } else {
+            currentChunk = currentChunk ? currentChunk + " " + word : word;
+          }
+        }
+
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+        }
+
+        return chunks;
+      };
+
+      const chunks = splitTextIntoChunks(truncatedText);
+      const buffers: Buffer[] = [];
+
+      for (const chunk of chunks) {
+        // Clean chunk of parentheses, brackets, colons, or other punctuation that can cause Google Translate API 400 Bad Request
+        const cleanChunk = chunk
+          .replace(/[()\[\]{}#@_*+=|\\<>:;\-\r\n\t]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (!cleanChunk) continue;
+
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ml&client=gtx&q=${encodeURIComponent(cleanChunk)}`;
+        const response = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+        });
+
+        if (!response.ok) {
+          console.error(`Google TTS chunk fetch failed with status ${response.status} for chunk: "${cleanChunk}"`);
+          continue; // Skip failing chunk instead of throwing and breaking everything, so we still play the rest!
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        buffers.push(Buffer.from(arrayBuffer));
       }
 
-      const contentType = response.headers.get("content-type") || "audio/mpeg";
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=86400");
+      if (buffers.length === 0) {
+        throw new Error("No audio buffers were successfully generated");
+      }
 
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      res.send(buffer);
+      const combinedBuffer = Buffer.concat(buffers);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(combinedBuffer);
     } catch (error) {
       console.error("TTS Proxy Error:", error);
       res.status(500).json({ error: "Failed to generate TTS audio" });
