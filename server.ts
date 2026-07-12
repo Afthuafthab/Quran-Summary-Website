@@ -179,6 +179,167 @@ async function startServer() {
     }
   });
 
+  const betaReportsPath = path.join(resolvedDirname, "data", "beta_reports.json");
+  const ADMIN_USER_ID = process.env.ADMIN_USER_ID || "test";
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "test@123";
+
+  type BetaReport = {
+    id: string;
+    chapterId: string;
+    sectionId: string;
+    sectionTitle: string;
+    anchorId: string;
+    originalText: string;
+    suggestedText: string;
+    issueType: string;
+    note?: string;
+    reporterName?: string;
+    reporterContact?: string;
+    status: "new" | "reviewing" | "fixed" | "rejected";
+    resolutionNote?: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+
+  type BetaReportStore = {
+    reports: BetaReport[];
+  };
+
+  const ensureBetaReportStore = async () => {
+    await fs.mkdir(path.dirname(betaReportsPath), { recursive: true });
+    try {
+      await fs.access(betaReportsPath);
+    } catch {
+      const initial: BetaReportStore = { reports: [] };
+      await fs.writeFile(betaReportsPath, JSON.stringify(initial, null, 2), "utf8");
+    }
+  };
+
+  const readBetaReportStore = async (): Promise<BetaReportStore> => {
+    await ensureBetaReportStore();
+    const raw = await fs.readFile(betaReportsPath, "utf8");
+    const parsed = JSON.parse(raw || "{}") as Partial<BetaReportStore>;
+    return {
+      reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+    };
+  };
+
+  const writeBetaReportStore = async (store: BetaReportStore) => {
+    await fs.writeFile(betaReportsPath, JSON.stringify(store, null, 2), "utf8");
+  };
+
+  const isAdminAllowed = (req: express.Request) => {
+    const providedUser = String(req.headers["x-admin-user-id"] || "").trim();
+    const providedPass = String(req.headers["x-admin-password"] || "").trim();
+    return providedUser === ADMIN_USER_ID && providedPass === ADMIN_PASSWORD;
+  };
+
+  app.post("/api/admin/login", (req, res) => {
+    const userId = String(req.body?.userId || "").trim();
+    const password = String(req.body?.password || "").trim();
+
+    if (userId === ADMIN_USER_ID && password === ADMIN_PASSWORD) {
+      return res.json({ status: "success" });
+    }
+
+    return res.status(401).json({ status: "error", message: "Invalid admin credentials" });
+  });
+
+  app.post("/api/beta-report", async (req, res) => {
+    const chapterId = String(req.body?.chapterId || "").trim();
+    const sectionId = String(req.body?.sectionId || "").trim();
+    const sectionTitle = String(req.body?.sectionTitle || "").trim();
+    const anchorId = String(req.body?.anchorId || "").trim();
+    const originalText = String(req.body?.originalText || "").trim();
+    const suggestedText = String(req.body?.suggestedText || "").trim();
+    const issueType = String(req.body?.issueType || "").trim() || "text-error";
+    const note = String(req.body?.note || "").trim();
+    const reporterName = String(req.body?.reporterName || "").trim();
+    const reporterContact = String(req.body?.reporterContact || "").trim();
+
+    if (!sectionId || !anchorId || !originalText) {
+      return res.status(400).json({ status: "error", message: "Missing report context" });
+    }
+
+    if (!suggestedText && !note) {
+      return res.status(400).json({ status: "error", message: "Provide corrected text or note" });
+    }
+
+    try {
+      const store = await readBetaReportStore();
+      const now = new Date().toISOString();
+      const reportId = `rep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      store.reports.unshift({
+        id: reportId,
+        chapterId,
+        sectionId,
+        sectionTitle,
+        anchorId,
+        originalText,
+        suggestedText,
+        issueType,
+        note: note || undefined,
+        reporterName: reporterName || undefined,
+        reporterContact: reporterContact || undefined,
+        status: "new",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await writeBetaReportStore(store);
+      return res.json({ status: "success", reportId });
+    } catch (error) {
+      console.error("Beta report submit error:", error);
+      return res.status(500).json({ status: "error", message: "Failed to submit report" });
+    }
+  });
+
+  app.get("/api/admin/beta-reports", async (req, res) => {
+    if (!isAdminAllowed(req)) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
+
+    try {
+      const store = await readBetaReportStore();
+      return res.json({ status: "success", reports: store.reports });
+    } catch (error) {
+      console.error("Beta reports list error:", error);
+      return res.status(500).json({ status: "error", message: "Failed to load reports" });
+    }
+  });
+
+  app.patch("/api/admin/beta-reports/:id", async (req, res) => {
+    if (!isAdminAllowed(req)) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    }
+
+    const reportId = String(req.params.id || "").trim();
+    const nextStatus = String(req.body?.status || "").trim() as BetaReport["status"];
+    const resolutionNote = String(req.body?.resolutionNote || "").trim();
+
+    if (!reportId || !["new", "reviewing", "fixed", "rejected"].includes(nextStatus)) {
+      return res.status(400).json({ status: "error", message: "Invalid report update" });
+    }
+
+    try {
+      const store = await readBetaReportStore();
+      const report = store.reports.find(r => r.id === reportId);
+      if (!report) {
+        return res.status(404).json({ status: "error", message: "Report not found" });
+      }
+
+      report.status = nextStatus;
+      report.resolutionNote = resolutionNote || report.resolutionNote;
+      report.updatedAt = new Date().toISOString();
+      await writeBetaReportStore(store);
+      return res.json({ status: "success" });
+    } catch (error) {
+      console.error("Beta report update error:", error);
+      return res.status(500).json({ status: "error", message: "Failed to update report" });
+    }
+  });
+
   app.get("/api/sanity/sample-chapter", async (req, res) => {
     const id = (req.query.id as string | undefined) || "f4b3757b-9100-4b4a-8970-cb4c736f64e0";
 

@@ -24,7 +24,9 @@ import {
   Layers,
   Award,
   Bookmark,
-  BookmarkCheck
+  BookmarkCheck,
+  Bug,
+  Shield
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { allSurahs, SurahMeta } from "./data/all_surahs";
@@ -84,6 +86,27 @@ interface HardcopyDemandStatus {
   targetReached: boolean;
   hasVoted: boolean;
   notifyEligible: boolean;
+}
+
+interface BetaReportDraft {
+  chapterId: string;
+  sectionId: string;
+  sectionTitle: string;
+  anchorId: string;
+  originalText: string;
+}
+
+interface BetaReportItem extends BetaReportDraft {
+  id: string;
+  suggestedText: string;
+  issueType: string;
+  note?: string;
+  reporterName?: string;
+  reporterContact?: string;
+  status: "new" | "reviewing" | "fixed" | "rejected";
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const volumes: Volume[] = [
@@ -177,7 +200,25 @@ export default function App() {
     hasVoted: false,
     notifyEligible: false,
   });
-  
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportDraft, setReportDraft] = useState<BetaReportDraft | null>(null);
+  const [reportForm, setReportForm] = useState({
+    issueType: "unicode",
+    suggestedText: "",
+    note: "",
+    reporterName: "",
+    reporterContact: "",
+  });
+  const [reportSubmitState, setReportSubmitState] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [reportMessage, setReportMessage] = useState("");
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminUserId, setAdminUserId] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminLoggedIn, setAdminLoggedIn] = useState(false);
+  const [adminReports, setAdminReports] = useState<BetaReportItem[]>([]);
+  const [adminStatusMessage, setAdminStatusMessage] = useState("");
+  const [adminLoading, setAdminLoading] = useState(false);
+
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -226,12 +267,26 @@ export default function App() {
     };
   }, []);
 
+  const parseJsonSafe = async (response: Response) => {
+    const raw = await response.text();
+    if (!raw) return {} as any;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {
+        status: response.ok ? "success" : "error",
+        message: raw || `HTTP ${response.status}`,
+      };
+    }
+  };
+
   const loadHardcopyStatus = async () => {
     try {
       const voteId = localStorage.getItem("quran_hardcopy_vote_id") || "";
       const url = voteId ? `/api/hardcopy-vote/status?voteId=${encodeURIComponent(voteId)}` : "/api/hardcopy-vote/status";
       const response = await fetch(url);
-      const payload = await response.json();
+      const payload = await parseJsonSafe(response);
 
       if (payload?.status === "success") {
         setHardcopyStatus({
@@ -262,7 +317,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(hardcopyForm),
       });
-      const payload = await response.json();
+      const payload = await parseJsonSafe(response);
 
       if (!response.ok || payload?.status !== "success") {
         throw new Error(payload?.message || "Submission failed");
@@ -284,6 +339,149 @@ export default function App() {
       setHardcopyMessage(error?.message || "വോട്ട് സമർപ്പിക്കാൻ കഴിഞ്ഞില്ല.");
     }
   };
+
+  const openReportModal = (draft: BetaReportDraft) => {
+    setReportDraft(draft);
+    setReportForm({
+      issueType: "unicode",
+      suggestedText: "",
+      note: "",
+      reporterName: "",
+      reporterContact: "",
+    });
+    setReportSubmitState("idle");
+    setReportMessage("");
+    setShowReportModal(true);
+  };
+
+  const handleSubmitBetaReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportDraft) return;
+
+    setReportSubmitState("submitting");
+    setReportMessage("");
+
+    try {
+      const response = await fetch("/api/beta-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...reportDraft, ...reportForm }),
+      });
+      const payload = await parseJsonSafe(response);
+
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Report submit failed");
+      }
+
+      setReportSubmitState("success");
+      setReportMessage("റിപ്പോർട്ട് സ്വീകരിച്ചു. നന്ദി — ടീം പരിശോധിച്ച് തിരുത്തും.");
+      setTimeout(() => setShowReportModal(false), 900);
+    } catch (error: any) {
+      setReportSubmitState("error");
+      setReportMessage(error?.message || "റിപ്പോർട്ട് സമർപ്പിക്കാൻ കഴിഞ്ഞില്ല.");
+    }
+  };
+
+  const loadAdminReports = async (credentials?: { userId: string; password: string }) => {
+    const userId = credentials?.userId ?? adminUserId;
+    const password = credentials?.password ?? adminPassword;
+
+    if (!userId.trim() || !password.trim()) {
+      setAdminStatusMessage("ആദ്യം login ചെയ്യുക.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminStatusMessage("");
+
+    try {
+      const response = await fetch("/api/admin/beta-reports", {
+        headers: {
+          "x-admin-user-id": userId,
+          "x-admin-password": password,
+        },
+      });
+      const payload = await parseJsonSafe(response);
+
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Unauthorized");
+      }
+
+      setAdminReports(payload.reports || []);
+      setAdminStatusMessage("Reports loaded.");
+    } catch (error: any) {
+      setAdminStatusMessage(error?.message || "Failed to load reports");
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const handleAdminLogin = async () => {
+    if (!adminUserId.trim() || !adminPassword.trim()) {
+      setAdminStatusMessage("User IDയും Passwordയും നൽകുക.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminStatusMessage("");
+    try {
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: adminUserId, password: adminPassword }),
+      });
+      const payload = await parseJsonSafe(response);
+
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Invalid admin credentials");
+      }
+
+      setAdminLoggedIn(true);
+      setAdminStatusMessage("Login success.");
+      await loadAdminReports({ userId: adminUserId, password: adminPassword });
+    } catch (error: any) {
+      setAdminLoggedIn(false);
+      setAdminStatusMessage(error?.message || "Login failed");
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const updateReportStatus = async (id: string, status: BetaReportItem["status"]) => {
+    if (!adminLoggedIn) {
+      setAdminStatusMessage("Admin login required.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/admin/beta-reports/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-user-id": adminUserId,
+          "x-admin-password": adminPassword,
+        },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await parseJsonSafe(response);
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Update failed");
+      }
+
+      setAdminReports(prev => prev.map(r => (r.id === id ? { ...r, status } : r)));
+      setAdminStatusMessage("Updated.");
+    } catch (error: any) {
+      setAdminStatusMessage(error?.message || "Update failed");
+    }
+  };
+
+  useEffect(() => {
+    if (showAdminPanel) {
+      setAdminLoggedIn(false);
+      setAdminReports([]);
+      setAdminStatusMessage("");
+    }
+  }, [showAdminPanel]);
 
   useEffect(() => {
     if (viewMode === "reader") {
@@ -468,7 +666,7 @@ export default function App() {
       setSanityChapterLoadState("loading");
       try {
         const response = await fetch(`/api/sanity/chapter?chapterNumber=${activeSection.surahId}`);
-        const payload = await response.json();
+        const payload = await parseJsonSafe(response);
         const data = payload?.data as SanityChapterContent | null;
 
         setSanityChapterContent(data);
@@ -978,6 +1176,15 @@ export default function App() {
           >
             <Info className="w-4 h-4 text-accent-main" />
             <span className="hidden md:inline">ഗ്രന്ഥകർത്താവ്</span>
+          </button>
+
+          {/* Developer Admin Panel */}
+          <button
+            onClick={() => setShowAdminPanel(true)}
+            className="p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all"
+            title="Developer panel"
+          >
+            <Shield className="w-4 h-4 text-accent-main" />
           </button>
         </div>
       </header>
@@ -1522,7 +1729,7 @@ export default function App() {
                         const isLineHighlighted = highlightedLineId === anchorId;
                         return (
                           <div key={`sanity-${index}`} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
-                            <div className="flex justify-end pb-1">
+                            <div className="flex justify-end gap-1.5 pb-1">
                               <button
                                 onClick={() => handleSaveLineBookmark(anchorId, par)}
                                 className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
@@ -1530,6 +1737,20 @@ export default function App() {
                               >
                                 <Bookmark className="w-3 h-3 text-accent-main" />
                                 Bookmark
+                              </button>
+                              <button
+                                onClick={() => openReportModal({
+                                  chapterId: String(activeSection.surahId || "intro"),
+                                  sectionId: activeSection.id,
+                                  sectionTitle: activeSection.title,
+                                  anchorId,
+                                  originalText: par,
+                                })}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
+                                title="ഈ വരിയിൽ പിശക് റിപ്പോർട്ട് ചെയ്യുക"
+                              >
+                                <Bug className="w-3 h-3" />
+                                Report
                               </button>
                             </div>
                             <p
@@ -1583,7 +1804,7 @@ export default function App() {
                             const isLineHighlighted = highlightedLineId === anchorId;
                             return (
                               <div key={index} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
-                                <div className="flex justify-end pb-1">
+                                <div className="flex justify-end gap-1.5 pb-1">
                                   <button
                                     onClick={() => handleSaveLineBookmark(anchorId, par)}
                                     className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
@@ -1591,6 +1812,20 @@ export default function App() {
                                   >
                                     <Bookmark className="w-3 h-3 text-accent-main" />
                                     Bookmark
+                                  </button>
+                                  <button
+                                    onClick={() => openReportModal({
+                                      chapterId: activeSection.type === "surah" ? String(activeSection.surahId || "") : "intro",
+                                      sectionId: activeSection.id,
+                                      sectionTitle: activeSection.title,
+                                      anchorId,
+                                      originalText: par,
+                                    })}
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
+                                    title="ഈ വരിയിൽ പിശക് റിപ്പോർട്ട് ചെയ്യുക"
+                                  >
+                                    <Bug className="w-3 h-3" />
+                                    Report
                                   </button>
                                 </div>
                                 <p 
@@ -1804,6 +2039,177 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* BETA REPORT MODAL */}
+      <AnimatePresence>
+        {showReportModal && reportDraft && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowReportModal(false)}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="fixed inset-0 m-auto max-w-xl w-[92vw] h-fit bg-bg-card border border-border-main rounded-2xl shadow-2xl p-5 z-50"
+            >
+              <div className="flex items-center justify-between border-b border-border-main/50 pb-3 mb-4">
+                <h3 className="text-base font-bold text-text-title font-serif">Unicode/ASCII പിശക് റിപ്പോർട്ട്</h3>
+                <button onClick={() => setShowReportModal(false)} className="p-1 rounded-full hover:bg-bg-subcard">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitBetaReport} className="space-y-3">
+                <div className="text-[11px] text-text-muted font-serif bg-bg-subcard border border-border-main rounded-xl p-3">
+                  <p><span className="font-bold text-text-title">അധ്യായം:</span> {reportDraft.sectionTitle}</p>
+                  <p className="mt-1"><span className="font-bold text-text-title">Reported line:</span> {reportDraft.originalText.slice(0, 220)}</p>
+                </div>
+
+                <select
+                  value={reportForm.issueType}
+                  onChange={(e) => setReportForm(prev => ({ ...prev, issueType: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                >
+                  <option value="unicode">Unicode conversion error</option>
+                  <option value="typo">Spelling/typo</option>
+                  <option value="split">Word split/join error</option>
+                  <option value="punctuation">Punctuation error</option>
+                  <option value="other">Other</option>
+                </select>
+
+                <textarea
+                  value={reportForm.suggestedText}
+                  onChange={(e) => setReportForm(prev => ({ ...prev, suggestedText: e.target.value }))}
+                  placeholder="ശരിയായ വാചകം / ശരിയായ പദം"
+                  rows={3}
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main resize-none"
+                />
+
+                <textarea
+                  value={reportForm.note}
+                  onChange={(e) => setReportForm(prev => ({ ...prev, note: e.target.value }))}
+                  placeholder="കൂടുതൽ കുറിപ്പുകൾ (optional)"
+                  rows={2}
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main resize-none"
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    value={reportForm.reporterName}
+                    onChange={(e) => setReportForm(prev => ({ ...prev, reporterName: e.target.value }))}
+                    placeholder="പേര് (optional)"
+                    className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                  />
+                  <input
+                    value={reportForm.reporterContact}
+                    onChange={(e) => setReportForm(prev => ({ ...prev, reporterContact: e.target.value }))}
+                    placeholder="Contact (optional)"
+                    className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                  />
+                </div>
+
+                {reportMessage && (
+                  <p className={`text-xs font-bold ${reportSubmitState === "error" ? "text-rose-500" : "text-emerald-500"}`}>
+                    {reportMessage}
+                  </p>
+                )}
+
+                <div className="pt-1 flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowReportModal(false)} className="px-3 py-2 rounded-xl border border-border-main text-xs font-bold text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all">Cancel</button>
+                  <button type="submit" disabled={reportSubmitState === "submitting"} className="px-4 py-2 rounded-xl bg-accent-main text-black text-xs font-extrabold disabled:opacity-50 transition-all">
+                    {reportSubmitState === "submitting" ? "Submitting..." : "റിപ്പോർട്ട് സമർപ്പിക്കുക"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* DEVELOPER ADMIN PANEL */}
+      <AnimatePresence>
+        {showAdminPanel && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAdminPanel(false)}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="fixed inset-0 m-auto max-w-5xl w-[96vw] max-h-[88vh] overflow-y-auto bg-bg-card border border-border-main rounded-2xl shadow-2xl p-5 z-50"
+            >
+              <div className="flex items-center justify-between border-b border-border-main/50 pb-3 mb-4">
+                <h3 className="text-base font-bold text-text-title font-serif">Developer Panel — Beta Error Reports</h3>
+                <button onClick={() => setShowAdminPanel(false)} className="p-1 rounded-full hover:bg-bg-subcard"><X className="w-4 h-4" /></button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+                <input
+                  value={adminUserId}
+                  onChange={(e) => setAdminUserId(e.target.value)}
+                  placeholder="Admin User ID"
+                  className="px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="Password"
+                  className="px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <button onClick={handleAdminLogin} className="px-4 py-2.5 rounded-xl bg-accent-main text-black text-xs font-extrabold">
+                  {adminLoading ? "Loading..." : adminLoggedIn ? "Re-login" : "Login"}
+                </button>
+              </div>
+
+              {adminLoggedIn && (
+                <div className="mb-4 flex justify-end">
+                  <button onClick={() => loadAdminReports()} className="px-4 py-2 rounded-xl border border-border-main text-xs font-bold text-text-title hover:bg-bg-subcard">
+                    Refresh Reports
+                  </button>
+                </div>
+              )}
+
+              {adminStatusMessage && <p className="text-xs font-bold text-text-muted mb-3">{adminStatusMessage}</p>}
+
+              <div className="space-y-3">
+                {!adminLoggedIn ? (
+                  <div className="text-xs text-text-muted border border-border-main rounded-xl p-4">Login ചെയ്താൽ reports കാണിക്കും.</div>
+                ) : adminReports.length === 0 ? (
+                  <div className="text-xs text-text-muted border border-border-main rounded-xl p-4">No reports yet.</div>
+                ) : (
+                  adminReports.map((rep) => (
+                    <div key={rep.id} className="border border-border-main rounded-xl p-3 bg-bg-subcard/40 space-y-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <p className="text-xs font-bold text-text-title">{rep.sectionTitle} • {rep.anchorId}</p>
+                        <span className="text-[10px] px-2 py-1 rounded-full border border-border-main text-text-muted">{rep.status}</span>
+                      </div>
+                      <p className="text-[11px] text-text-muted"><span className="font-bold text-text-title">Original:</span> {rep.originalText}</p>
+                      <p className="text-[11px] text-emerald-500"><span className="font-bold">Suggested:</span> {rep.suggestedText || "—"}</p>
+                      {rep.note && <p className="text-[11px] text-text-muted"><span className="font-bold text-text-title">Note:</span> {rep.note}</p>}
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button onClick={() => updateReportStatus(rep.id, "reviewing")} className="px-2.5 py-1 rounded-lg border border-border-main text-[10px] font-bold">Reviewing</button>
+                        <button onClick={() => updateReportStatus(rep.id, "fixed")} className="px-2.5 py-1 rounded-lg border border-emerald-500/50 text-emerald-500 text-[10px] font-bold">Mark Fixed</button>
+                        <button onClick={() => updateReportStatus(rep.id, "rejected")} className="px-2.5 py-1 rounded-lg border border-rose-500/50 text-rose-500 text-[10px] font-bold">Reject</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </motion.div>
           </>
         )}
