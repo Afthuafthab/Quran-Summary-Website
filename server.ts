@@ -1,8 +1,10 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { promises as fs } from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createClient } from "@sanity/client";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -27,11 +29,207 @@ const ai = new GoogleGenAI({
 import { quranData } from "./src/data/pmd_converted_content.ts";
 import { allSurahs } from "./src/data/all_surahs.ts";
 
+const sanityClient = createClient({
+  projectId: process.env.VITE_SANITY_PROJECT_ID || "lgqos9pf",
+  dataset: process.env.VITE_SANITY_DATASET || "production",
+  apiVersion: process.env.VITE_SANITY_API_VERSION || "2025-07-01",
+  useCdn: false,
+});
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const HOST = process.env.HOST || "0.0.0.0";
 
   app.use(express.json());
+
+  const hardCopyVotesPath = path.join(resolvedDirname, "data", "hardcopy_votes.json");
+  const HARD_COPY_TARGET = Math.max(50, Number(process.env.HARD_COPY_TARGET || 100));
+
+  type HardCopyVote = {
+    id: string;
+    name: string;
+    phone?: string;
+    address?: string;
+    email?: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+
+  type HardCopyVoteStore = {
+    votes: HardCopyVote[];
+  };
+
+  const ensureHardCopyStore = async () => {
+    await fs.mkdir(path.dirname(hardCopyVotesPath), { recursive: true });
+    try {
+      await fs.access(hardCopyVotesPath);
+    } catch {
+      const initial: HardCopyVoteStore = { votes: [] };
+      await fs.writeFile(hardCopyVotesPath, JSON.stringify(initial, null, 2), "utf8");
+    }
+  };
+
+  const readHardCopyStore = async (): Promise<HardCopyVoteStore> => {
+    await ensureHardCopyStore();
+    const raw = await fs.readFile(hardCopyVotesPath, "utf8");
+    const parsed = JSON.parse(raw || "{}") as Partial<HardCopyVoteStore>;
+    return {
+      votes: Array.isArray(parsed.votes) ? parsed.votes : [],
+    };
+  };
+
+  const writeHardCopyStore = async (store: HardCopyVoteStore) => {
+    await fs.writeFile(hardCopyVotesPath, JSON.stringify(store, null, 2), "utf8");
+  };
+
+  const buildDemandVisual = (count: number) => {
+    const progress = Math.max(0, Math.min(100, Math.round((count / HARD_COPY_TARGET) * 100)));
+    const targetReached = count >= HARD_COPY_TARGET;
+
+    let stage = "collecting";
+    if (targetReached) {
+      stage = "ready_to_print";
+    } else if (progress >= 75) {
+      stage = "almost_ready";
+    } else if (progress >= 40) {
+      stage = "building";
+    }
+
+    return { progress, stage, targetReached };
+  };
+
+  app.get("/api/hardcopy-vote/status", async (req, res) => {
+    try {
+      const voteId = (req.query.voteId as string | undefined)?.trim();
+      const store = await readHardCopyStore();
+      const demand = buildDemandVisual(store.votes.length);
+      const hasVoted = Boolean(voteId && store.votes.some(v => v.id === voteId));
+
+      return res.json({
+        status: "success",
+        hasVoted,
+        targetReached: demand.targetReached,
+        demandStage: demand.stage,
+        floatLevel: demand.progress,
+        notifyEligible: hasVoted && demand.targetReached,
+      });
+    } catch (error) {
+      console.error("Hard copy status error:", error);
+      return res.status(500).json({ status: "error", message: "Failed to load hard copy status" });
+    }
+  });
+
+  app.post("/api/hardcopy-vote", async (req, res) => {
+    const name = String(req.body?.name || "").trim();
+    const phone = String(req.body?.phone || "").trim();
+    const address = String(req.body?.address || "").trim();
+    const email = String(req.body?.email || "").trim();
+
+    if (!name || name.length < 2) {
+      return res.status(400).json({ status: "error", message: "Name is required" });
+    }
+
+    if (!phone && !address && !email) {
+      return res.status(400).json({ status: "error", message: "Provide phone, address, or email" });
+    }
+
+    try {
+      const store = await readHardCopyStore();
+      const now = new Date().toISOString();
+
+      const normalizedPhone = phone.replace(/\s+/g, "");
+      const existing = normalizedPhone
+        ? store.votes.find(v => (v.phone || "").replace(/\s+/g, "") === normalizedPhone)
+        : undefined;
+
+      let voteId = existing?.id;
+      if (existing) {
+        existing.name = name;
+        existing.phone = phone || existing.phone;
+        existing.address = address || existing.address;
+        existing.email = email || existing.email;
+        existing.updatedAt = now;
+      } else {
+        voteId = `vote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        store.votes.push({
+          id: voteId,
+          name,
+          phone: phone || undefined,
+          address: address || undefined,
+          email: email || undefined,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      await writeHardCopyStore(store);
+      const demand = buildDemandVisual(store.votes.length);
+
+      return res.json({
+        status: "success",
+        voteId,
+        targetReached: demand.targetReached,
+        demandStage: demand.stage,
+        floatLevel: demand.progress,
+      });
+    } catch (error) {
+      console.error("Hard copy vote submit error:", error);
+      return res.status(500).json({ status: "error", message: "Failed to submit vote" });
+    }
+  });
+
+  app.get("/api/sanity/sample-chapter", async (req, res) => {
+    const id = (req.query.id as string | undefined) || "f4b3757b-9100-4b4a-8970-cb4c736f64e0";
+
+    try {
+      const data = await sanityClient.fetch(
+        `*[_id == $id][0]{_id, _type, titleMal, titleEng, title, name, subtitle, summary, body, content, chapterNumber}`,
+        { id }
+      );
+
+      res.json({ status: "success", data });
+    } catch (error) {
+      console.error("Failed to fetch Sanity content:", error);
+      res.status(500).json({ status: "error", message: "Failed to fetch Sanity content" });
+    }
+  });
+
+  app.get("/api/sanity/chapter", async (req, res) => {
+    const chapterParam = req.query.chapterNumber as string | undefined;
+    const chapterNumber = chapterParam ? parseInt(chapterParam, 10) : NaN;
+
+    if (!Number.isFinite(chapterNumber) || chapterNumber < 1 || chapterNumber > 114) {
+      return res.status(400).json({ status: "error", message: "Invalid chapterNumber" });
+    }
+
+    try {
+      const data = await sanityClient.fetch(
+        `*[_type == "bookSection" && sectionType == "surah" && coalesce(surahNumber, chapterNumber) == $chapterNumber][0]{
+          _id,
+          _type,
+          title,
+          titleMal,
+          titleEng,
+          summary,
+          body,
+          content,
+          chapterNumber,
+          surahNumber,
+          versesCount,
+          revelation,
+          revelationMal,
+          _updatedAt
+        }`,
+        { chapterNumber }
+      );
+
+      res.json({ status: "success", data });
+    } catch (error) {
+      console.error("Failed to fetch Sanity chapter:", error);
+      res.status(500).json({ status: "error", message: "Failed to fetch Sanity chapter" });
+    }
+  });
 
   // API to retrieve list of available verses in the database (with optimized lazy-loading filtering)
   app.get("/api/verses", (req, res) => {
@@ -411,6 +609,14 @@ Structure the response exactly as a JSON object with:
       // Clean and truncate text to a maximum of 1500 characters to prevent abuse or excessively long requests
       const truncatedText = text.substring(0, 1500);
 
+      // Pronunciation normalization for key Malayalam-Arabic terms
+      const normalizedText = truncatedText
+        .replace(/\u200c|\u200d/g, "")
+        .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
+        .replace(/അല്-ലാഹു|അൽ-ലാഹു|അൽ ലാഹു/g, "അല്ലാഹൂ")
+        .replace(/\s+/g, " ")
+        .trim();
+
       // Helper function to split text into chunks of maximum 160 characters
       const splitTextIntoChunks = (str: string, maxLength = 160): string[] => {
         const cleaned = str.replace(/\s+/g, " ").trim();
@@ -440,13 +646,14 @@ Structure the response exactly as a JSON object with:
         return chunks;
       };
 
-      const chunks = splitTextIntoChunks(truncatedText);
+      const chunks = splitTextIntoChunks(normalizedText);
       const buffers: Buffer[] = [];
 
       for (const chunk of chunks) {
-        // Clean chunk of parentheses, brackets, colons, or other punctuation that can cause Google Translate API 400 Bad Request
+        // Keep natural punctuation for better Malayalam prosody; only strip control/special symbols.
         const cleanChunk = chunk
-          .replace(/[()\[\]{}#@_*+=|\\<>:;\-\r\n\t]/g, " ")
+          .replace(/[\u0000-\u001F\u007F]/g, " ")
+          .replace(/[\[\]{}#@_*+=|\\<>]/g, " ")
           .replace(/\s+/g, " ")
           .trim();
 
@@ -795,7 +1002,7 @@ The explanation field must be in elegant Malayalam.
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, HOST, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

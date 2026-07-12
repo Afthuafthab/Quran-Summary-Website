@@ -22,7 +22,9 @@ import {
   MapPin,
   Home,
   Layers,
-  Award
+  Award,
+  Bookmark,
+  BookmarkCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { allSurahs, SurahMeta } from "./data/all_surahs";
@@ -30,6 +32,22 @@ import { quranData, QuranVerse } from "./data/pmd_converted_content";
 import { volume2Data } from "./data/volume2";
 
 const allQuranData: Record<string, QuranVerse> = { ...quranData, ...volume2Data };
+
+interface SanityChapterContent {
+  _id?: string;
+  title?: string;
+  titleMal?: string;
+  titleEng?: string;
+  summary?: string;
+  body?: string;
+  content?: string;
+  chapterNumber?: number;
+  surahNumber?: number;
+  versesCount?: number;
+  revelation?: string;
+  revelationMal?: string;
+  _updatedAt?: string;
+}
 
 interface EReaderSection {
   id: string; // "intro_amukham" | "intro_vayanakar" | "intro_moksham" | "intro_grendha" | "surah_1" | "surah_114" ...
@@ -50,6 +68,22 @@ interface Volume {
   titleEng: string;
   description: string;
   chapterRange: string;
+}
+
+interface LineBookmark {
+  sectionId: string;
+  anchorId: string;
+  sectionTitle: string;
+  preview: string;
+  savedAt: number;
+}
+
+interface HardcopyDemandStatus {
+  floatLevel: number;
+  demandStage: "collecting" | "building" | "almost_ready" | "ready_to_print";
+  targetReached: boolean;
+  hasVoted: boolean;
+  notifyEligible: boolean;
 }
 
 const volumes: Volume[] = [
@@ -105,6 +139,8 @@ const getVolumeForSection = (item: EReaderSection): number => {
 };
 
 export default function App() {
+  const mainScrollRef = useRef<HTMLElement>(null);
+
   // Theme and UI States
   const [theme, setTheme] = useState<"midnight" | "white">(() => {
     const saved = localStorage.getItem("quran_theme");
@@ -130,6 +166,17 @@ export default function App() {
   const [activeSectionId, setActiveSectionId] = useState<string>("intro_amukham");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAuthorModal, setShowAuthorModal] = useState(false);
+  const [showHardcopyModal, setShowHardcopyModal] = useState(false);
+  const [hardcopyForm, setHardcopyForm] = useState({ name: "", phone: "", address: "", email: "" });
+  const [hardcopySubmitState, setHardcopySubmitState] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [hardcopyMessage, setHardcopyMessage] = useState("");
+  const [hardcopyStatus, setHardcopyStatus] = useState<HardcopyDemandStatus>({
+    floatLevel: 0,
+    demandStage: "collecting",
+    targetReached: false,
+    hasVoted: false,
+    notifyEligible: false,
+  });
   
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -137,6 +184,8 @@ export default function App() {
   // Audio Speech state
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingKey, setSpeakingKey] = useState<string | null>(null);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Read progress tracker
@@ -144,9 +193,103 @@ export default function App() {
     const saved = localStorage.getItem("quran_read_sections");
     return saved ? JSON.parse(saved) : [];
   });
+  const [lineBookmark, setLineBookmark] = useState<LineBookmark | null>(() => {
+    const saved = localStorage.getItem("quran_line_bookmark");
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as LineBookmark;
+    } catch {
+      return null;
+    }
+  });
+  const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
 
   // Highlighted search item scroll reference
   const [highlightedVerseKey, setHighlightedVerseKey] = useState<string | null>(null);
+  const [sanityChapterContent, setSanityChapterContent] = useState<SanityChapterContent | null>(null);
+  const [sanityChapterLoadState, setSanityChapterLoadState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
+  const [isSectionLoading, setIsSectionLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+    const syncVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      setAvailableVoices(voices);
+    };
+
+    syncVoices();
+    window.speechSynthesis.onvoiceschanged = syncVoices;
+
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
+
+  const loadHardcopyStatus = async () => {
+    try {
+      const voteId = localStorage.getItem("quran_hardcopy_vote_id") || "";
+      const url = voteId ? `/api/hardcopy-vote/status?voteId=${encodeURIComponent(voteId)}` : "/api/hardcopy-vote/status";
+      const response = await fetch(url);
+      const payload = await response.json();
+
+      if (payload?.status === "success") {
+        setHardcopyStatus({
+          floatLevel: Number(payload.floatLevel || 0),
+          demandStage: payload.demandStage || "collecting",
+          targetReached: Boolean(payload.targetReached),
+          hasVoted: Boolean(payload.hasVoted),
+          notifyEligible: Boolean(payload.notifyEligible),
+        });
+      }
+    } catch (error) {
+      console.error("Failed to load hard copy status:", error);
+    }
+  };
+
+  useEffect(() => {
+    loadHardcopyStatus();
+  }, []);
+
+  const handleSubmitHardcopyVote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setHardcopySubmitState("submitting");
+    setHardcopyMessage("");
+
+    try {
+      const response = await fetch("/api/hardcopy-vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(hardcopyForm),
+      });
+      const payload = await response.json();
+
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Submission failed");
+      }
+
+      if (payload.voteId) {
+        localStorage.setItem("quran_hardcopy_vote_id", payload.voteId);
+      }
+
+      setHardcopySubmitState("success");
+      setHardcopyMessage(
+        payload.targetReached
+          ? "ഹാർഡ് കോപ്പി പ്രിന്റിംഗിനായി തയ്യാറാണ്! ഉടൻ ബന്ധപ്പെടുന്നതാണ്."
+          : "താങ്കളുടെ ഹാർഡ് കോപ്പി വോട്ട് സ്വീകരിച്ചു. പ്രിന്റിംഗ് ഘട്ടം എത്തിയാൽ അറിയിപ്പ് ലഭിക്കും."
+      );
+      await loadHardcopyStatus();
+    } catch (error: any) {
+      setHardcopySubmitState("error");
+      setHardcopyMessage(error?.message || "വോട്ട് സമർപ്പിക്കാൻ കഴിഞ്ഞില്ല.");
+    }
+  };
+
+  useEffect(() => {
+    if (viewMode === "reader") {
+      setIsSectionLoading(true);
+    }
+  }, [activeSectionId, viewMode]);
 
   // Apply Theme CSS variables to root element
   useEffect(() => {
@@ -189,6 +332,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("quran_font_delta", fontDelta.toString());
   }, [fontDelta]);
+
+  // Persist line bookmark
+  useEffect(() => {
+    if (lineBookmark) {
+      localStorage.setItem("quran_line_bookmark", JSON.stringify(lineBookmark));
+    } else {
+      localStorage.removeItem("quran_line_bookmark");
+    }
+  }, [lineBookmark]);
 
   // Save read chapters to localStorage
   const markAsRead = (id: string) => {
@@ -305,6 +457,49 @@ export default function App() {
     }
   }, [activeSectionId, activeSection]);
 
+  useEffect(() => {
+    const loadSanityChapter = async () => {
+      if (activeSection.type !== "surah" || !activeSection.surahId) {
+        setSanityChapterContent(null);
+        setSanityChapterLoadState("idle");
+        return;
+      }
+
+      setSanityChapterLoadState("loading");
+      try {
+        const response = await fetch(`/api/sanity/chapter?chapterNumber=${activeSection.surahId}`);
+        const payload = await response.json();
+        const data = payload?.data as SanityChapterContent | null;
+
+        setSanityChapterContent(data);
+        setSanityChapterLoadState(data ? "ready" : "empty");
+      } catch (error) {
+        console.error("Failed to load Sanity chapter content:", error);
+        setSanityChapterContent(null);
+        setSanityChapterLoadState("error");
+      }
+    };
+
+    loadSanityChapter();
+  }, [activeSection.id, activeSection.type, activeSection.surahId]);
+
+  useEffect(() => {
+    if (viewMode !== "reader") {
+      setIsSectionLoading(false);
+      return;
+    }
+
+    if (activeSection.type === "surah") {
+      if (["ready", "empty", "error"].includes(sanityChapterLoadState)) {
+        setIsSectionLoading(false);
+      }
+      return;
+    }
+
+    const timer = setTimeout(() => setIsSectionLoading(false), 200);
+    return () => clearTimeout(timer);
+  }, [activeSection.type, sanityChapterLoadState, viewMode]);
+
   // Helper to extract available verses for a Surah
   const getVersesForSurah = (surahId: number) => {
     const filtered: [string, QuranVerse][] = [];
@@ -365,6 +560,44 @@ export default function App() {
     return [];
   }, [activeSection]);
 
+  const sanityChapterParagraphs = useMemo(() => {
+    const raw = sanityChapterContent?.content || sanityChapterContent?.body || "";
+    if (!raw) return [];
+
+    return raw
+      .split(/\r?\n\r?\n|\r?\n/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }, [sanityChapterContent]);
+
+  const renderPlaybackSpeedControl = () => (
+    <label className="inline-flex items-center gap-1 text-[10px] font-bold text-text-muted">
+      <span>Speed</span>
+      <select
+        value={playbackRate}
+        onChange={(e) => {
+          const nextRate = Number(e.target.value);
+          setPlaybackRate(nextRate);
+          if (audioRef.current) {
+            try {
+              (audioRef.current as HTMLAudioElement).playbackRate = nextRate;
+            } catch {
+              // no-op for synthetic audioRef wrappers
+            }
+          }
+        }}
+        className="bg-bg-subcard border border-border-main rounded-md px-1.5 py-1 text-[10px] text-text-title cursor-pointer"
+        aria-label="Audio playback speed"
+      >
+        <option value={0.75}>0.75x</option>
+        <option value={0.9}>0.9x</option>
+        <option value={1}>1x</option>
+        <option value={1.1}>1.1x</option>
+        <option value={1.25}>1.25x</option>
+      </select>
+    </label>
+  );
+
   // Read Aloud handler
   const handleReadAloud = (key: string, textArray: string[]) => {
     if (isSpeaking && speakingKey === key) {
@@ -372,42 +605,71 @@ export default function App() {
       return;
     }
 
-    stopSpeaking(); // Fully clear any ongoing speech or audio element before starting new
+    stopSpeaking();
 
     setIsSpeaking(true);
     setSpeakingKey(key);
 
     const fullText = textArray.join(" ");
-    // Strip parenthetical verses counts and limit text length for stability
     const cleanText = fullText
       .replace(/\(\s*\d+:\s*\d+\s*\)/g, "")
-      .substring(0, 1000);
+      // Pronunciation normalization for key Arabic-origin terms in Malayalam TTS
+      .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
+      .replace(/അല്-ലാഹു|അൽ-ലാഹു|അൽ ലാഹു/g, "അല്ലാഹൂ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-    const audioUrl = `/api/tts?text=${encodeURIComponent(cleanText)}`;
-    const audio = new Audio(audioUrl);
-    audioRef.current = audio;
+    const speakWithWebSpeech = () => {
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
 
-    audio.play().catch(err => {
-      console.warn("Proxy audio playback failed, falling back to Web Speech API:", err);
-      
-      // Fallback: Web Speech API (speechSynthesis)
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        // Cancel any current speaking
-        window.speechSynthesis.cancel();
-        
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.lang = "ml-IN"; // Malayalam voice language code
-        
-        // Find a Malayalam voice if available
-        const voices = window.speechSynthesis.getVoices();
-        const mlVoice = voices.find(v => v.lang.startsWith("ml"));
-        if (mlVoice) {
-          utterance.voice = mlVoice;
+      const synth = window.speechSynthesis;
+      synth.cancel();
+
+      const voices = availableVoices.length ? availableVoices : synth.getVoices();
+      const mlVoice = voices.find(v => v.lang.toLowerCase().startsWith("ml"));
+
+      // Only use browser speech when a real Malayalam voice is present.
+      // Otherwise fallback to /api/tts (forced Malayalam via tl=ml).
+      if (!mlVoice) return false;
+
+      const splitForSpeech = (text: string, maxLen = 350) => {
+        const segments = text.split(/(?<=[.!?।])\s+/);
+        const chunks: string[] = [];
+        let buffer = "";
+
+        for (const seg of segments) {
+          if (!seg) continue;
+          if ((buffer + " " + seg).trim().length > maxLen) {
+            if (buffer.trim()) chunks.push(buffer.trim());
+            buffer = seg;
+          } else {
+            buffer = `${buffer} ${seg}`.trim();
+          }
         }
 
-        utterance.onend = () => {
+        if (buffer.trim()) chunks.push(buffer.trim());
+        return chunks.length ? chunks : [text];
+      };
+
+      const chunks = splitForSpeech(cleanText);
+      let idx = 0;
+
+      const speakNext = () => {
+        if (idx >= chunks.length) {
           setIsSpeaking(false);
           setSpeakingKey(null);
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(chunks[idx]);
+        utterance.lang = mlVoice?.lang || "ml-IN";
+        if (mlVoice) utterance.voice = mlVoice;
+        utterance.rate = playbackRate;
+        utterance.pitch = 1;
+
+        utterance.onend = () => {
+          idx += 1;
+          speakNext();
         };
 
         utterance.onerror = (e) => {
@@ -416,18 +678,42 @@ export default function App() {
           setSpeakingKey(null);
         };
 
-        // Create a fake audio ref container that satisfies pause() using cancel()
         audioRef.current = {
           pause: () => {
-            window.speechSynthesis.cancel();
+            synth.cancel();
           }
         } as any;
 
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setIsSpeaking(false);
-        setSpeakingKey(null);
-      }
+        synth.speak(utterance);
+      };
+
+      speakNext();
+      return true;
+    };
+
+    // Prefer instant client-side Malayalam speech first (no network wait)
+    const started = speakWithWebSpeech();
+    if (started) return;
+
+    // Fallback to server-side Malayalam TTS only if browser Malayalam voice is unavailable
+    // Cap URL payload to keep request reliable across browsers/proxies.
+    const ttsText = cleanText.substring(0, 1200);
+    if (!ttsText) {
+      setIsSpeaking(false);
+      setSpeakingKey(null);
+      return;
+    }
+
+    const audioUrl = `/api/tts?text=${encodeURIComponent(ttsText)}`;
+    const audio = new Audio(audioUrl);
+    audio.preload = "auto";
+    audio.playbackRate = playbackRate;
+    audioRef.current = audio;
+
+    audio.play().catch(err => {
+      console.warn("Audio playback failed:", err);
+      setIsSpeaking(false);
+      setSpeakingKey(null);
     });
 
     audio.onended = () => {
@@ -513,13 +799,64 @@ export default function App() {
     }, 200);
   };
 
+  const scrollToLineAnchor = (anchorId: string) => {
+    const el = document.getElementById(anchorId);
+    if (!el) return false;
+
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedLineId(anchorId);
+    setTimeout(() => setHighlightedLineId((prev) => (prev === anchorId ? null : prev)), 2600);
+    return true;
+  };
+
+  const handleSaveLineBookmark = (anchorId: string, previewText: string) => {
+    const preview = previewText.trim().replace(/\s+/g, " ").slice(0, 90);
+    setLineBookmark({
+      sectionId: activeSection.id,
+      anchorId,
+      sectionTitle: activeSection.title,
+      preview,
+      savedAt: Date.now(),
+    });
+  };
+
+  const handleGoToBookmark = () => {
+    if (!lineBookmark) return;
+
+    stopSpeaking();
+    setViewMode("reader");
+    if (activeSectionId !== lineBookmark.sectionId) {
+      setActiveSectionId(lineBookmark.sectionId);
+    }
+
+    const anchorToFind = lineBookmark.anchorId;
+    let tries = 0;
+    const maxTries = 14;
+
+    const tryScroll = () => {
+      const ok = scrollToLineAnchor(anchorToFind);
+      if (ok) return;
+      tries += 1;
+      if (tries < maxTries) {
+        setTimeout(tryScroll, 140);
+      }
+    };
+
+    setTimeout(tryScroll, 120);
+  };
+
+  const scrollReaderToTop = () => {
+    mainScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   // Previous and Next page handlers
   const handleNext = () => {
     if (activeIndex < sequence.length - 1) {
       markAsRead(activeSectionId);
       const nextId = sequence[activeIndex + 1].id;
       setActiveSectionId(nextId);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollReaderToTop();
       stopSpeaking();
     }
   };
@@ -528,10 +865,38 @@ export default function App() {
     if (activeIndex > 0) {
       const prevId = sequence[activeIndex - 1].id;
       setActiveSectionId(prevId);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollReaderToTop();
       stopSpeaking();
     }
   };
+
+  const renderNavigationButtons = () => (
+    <div className="pt-6 border-t border-border-main/50 flex justify-between items-center gap-4">
+      <button
+        onClick={handlePrev}
+        disabled={activeIndex === 0}
+        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 border border-border-main rounded-xl text-xs font-bold bg-bg-card text-text-title hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer font-serif"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        <span>മുൻപത്തെ ഭാഗം</span>
+      </button>
+
+      <button
+        onClick={handleNext}
+        disabled={activeIndex === sequence.length - 1}
+        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-accent-main text-black hover:bg-opacity-95 font-extrabold text-xs rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer shadow-sm font-serif"
+      >
+        <span>അടുത്ത ഭാഗം</span>
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
+
+  useEffect(() => {
+    if (viewMode === "reader") {
+      scrollReaderToTop();
+    }
+  }, [activeSectionId, viewMode]);
 
   return (
     <div className={`min-h-screen flex flex-col font-sans text-text-body bg-bg-app transition-colors duration-300`}>
@@ -778,7 +1143,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* MAIN READER WINDOW or DASHBOARD */}
-        <main className={`flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto mx-auto space-y-8 pb-32 transition-all duration-300 ${viewMode === "dashboard" ? "max-w-5xl w-full" : "max-w-4xl"}`}>
+        <main ref={mainScrollRef} className={`flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto mx-auto space-y-8 pb-32 transition-all duration-300 ${viewMode === "dashboard" ? "max-w-5xl w-full" : "max-w-4xl"}`}>
           
           {viewMode === "dashboard" ? (
             <div className="space-y-8">
@@ -839,6 +1204,45 @@ export default function App() {
                         className="h-full bg-accent-main transition-all duration-500"
                         style={{ width: `${Math.min(100, (readSections.length / 118) * 100)}%` }}
                       />
+                    </div>
+                  </div>
+
+                  {/* Hardcopy demand voting widget (count hidden, visual float only) */}
+                  <div className="mt-4 border border-border-main rounded-2xl bg-bg-app/70 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-text-title font-serif">ഹാർഡ് കോപ്പി ആവശ്യക്കാർക്കുള്ള വോട്ട്</p>
+                        <p className="text-[11px] text-text-muted font-serif leading-relaxed">
+                          പുസ്തകത്തിന്റെ അച്ചടി നഷ്ടമില്ലാതെ തുടങ്ങാൻ ആവശ്യകത ശേഖരിക്കുന്നു. കൃത്യമായ എണ്ണം കാണിക്കില്ല; താഴെയുള്ള floating-book സൂചകം മുകളിലെത്തുമ്പോൾ പ്രിന്റിംഗ് ആരംഭിക്കും.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setShowHardcopyModal(true);
+                              setHardcopySubmitState("idle");
+                              setHardcopyMessage("");
+                            }}
+                            className="px-3 py-2 rounded-xl bg-accent-main text-black text-xs font-extrabold hover:bg-opacity-90 transition-all cursor-pointer"
+                          >
+                            ഹാർഡ് കോപ്പിക്കായി വോട്ട് ചെയ്യുക
+                          </button>
+                          {hardcopyStatus.hasVoted && (
+                            <span className="text-[10px] text-emerald-500 font-bold">വോട്ട് രേഖപ്പെടുത്തിയിട്ടുണ്ട്</span>
+                          )}
+                        </div>
+                        {hardcopyStatus.notifyEligible && (
+                          <p className="text-[10px] text-accent-main font-bold">പ്രിന്റിംഗ് ഘട്ടം എത്തി — ഉടൻ താങ്കളെ ബന്ധപ്പെടും.</p>
+                        )}
+                      </div>
+
+                      <div className="hardcopy-float-gauge">
+                        <div className="hardcopy-float-book-stack" />
+                        <div className="hardcopy-float-track" />
+                        <BookOpen
+                          className="hardcopy-floating-icon"
+                          style={{ bottom: `${Math.max(6, Math.min(92, hardcopyStatus.floatLevel))}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1033,11 +1437,113 @@ export default function App() {
                     <span className="text-xs font-mono text-text-muted">Total: {activeSection.versesCount} Verses</span>
                   )}
                 </div>
+
+                <div className="mt-3 pt-3 border-t border-border-main/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="text-[11px] text-text-muted font-serif">
+                    {lineBookmark ? (
+                      <>
+                        <span className="font-bold text-text-title">ബുക്ക് മാർക്ക്:</span>{" "}
+                        <span>{lineBookmark.sectionTitle} — “{lineBookmark.preview}...”</span>
+                      </>
+                    ) : (
+                      <span>ഇവിടെ നിന്നുള്ള പ്രത്യേക വരി ബുക്ക് മാർക്ക് ചെയ്യാം.</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleGoToBookmark}
+                      disabled={!lineBookmark}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold bg-bg-subcard border-border-main text-text-title disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg-card transition-all cursor-pointer"
+                      title="ബുക്ക് മാർക്കിലേക്കു പോകുക"
+                    >
+                      <BookmarkCheck className="w-3.5 h-3.5 text-accent-main" />
+                      തുടരാൻ (Resume)
+                    </button>
+
+                    {lineBookmark && (
+                      <button
+                        onClick={() => setLineBookmark(null)}
+                        className="px-2.5 py-1.5 rounded-xl border border-border-main text-[11px] font-bold text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
+                        title="ബുക്ക് മാർക്ക് നീക്കംചെയ്യുക"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {/* TOP SEQUENTIAL NAVIGATION BUTTONS */}
+              {renderNavigationButtons()}
 
               {/* Verbatim Content Listing */}
               <div className="space-y-6">
-                {currentVerses.length > 0 ? (
+                {isSectionLoading || (activeSection.type === "surah" && sanityChapterLoadState === "loading") ? (
+                  <div className="bg-bg-card rounded-2xl p-8 border border-border-main text-center space-y-4">
+                    <div className="book-loader mx-auto" aria-label="Loading book pages">
+                      <div className="book-loader-cover" />
+                      <div className="book-loader-page page-1" />
+                      <div className="book-loader-page page-2" />
+                      <div className="book-loader-page page-3" />
+                    </div>
+                    <p className="text-text-muted font-medium font-serif text-base">അധ്യായം ലോഡ് ചെയ്യുന്നു... (Loading chapter...)</p>
+                  </div>
+                ) : activeSection.type === "surah" && sanityChapterParagraphs.length > 0 ? (
+                  <div 
+                    id={`verse-card-sanity-${activeSection.surahId}`}
+                    className="bg-bg-card rounded-2xl p-5 sm:p-6 border border-border-main shadow-sm space-y-4 transition-all relative"
+                  >
+                    <div className="flex justify-between items-center border-b border-border-main/50 pb-3">
+                      <span className="text-[10px] font-extrabold text-accent-main uppercase tracking-wider font-sans">
+                        {`അദ്ധ്യായം (Chapter) ${activeSection.surahId}`}
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        {renderPlaybackSpeedControl()}
+                        <button
+                          onClick={() => handleReadAloud(`sanity_chapter_${activeSection.surahId}`, sanityChapterParagraphs)}
+                          className={`p-2 rounded-xl border transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer ${
+                            isSpeaking && speakingKey === `sanity_chapter_${activeSection.surahId}`
+                              ? "bg-accent-main/20 border-accent-main text-accent-light"
+                              : "bg-bg-subcard border-border-main text-text-muted hover:text-text-title hover:bg-bg-card"
+                          }`}
+                          title={isSpeaking && speakingKey === `sanity_chapter_${activeSection.surahId}` ? "ശബ്ദം നിർത്തുക" : "വായിച്ചു കേൾക്കുക"}
+                        >
+                          {isSpeaking && speakingKey === `sanity_chapter_${activeSection.surahId}` ? <VolumeX className="w-3.5 h-3.5 text-accent-main" /> : <Volume2 className="w-3.5 h-3.5" />}
+                          <span>{isSpeaking && speakingKey === `sanity_chapter_${activeSection.surahId}` ? "Stop" : "Read Aloud"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3.5">
+                      {sanityChapterParagraphs.map((par, index) => {
+                        const anchorId = `line-sanity-${activeSection.id}-${index}`;
+                        const isLineHighlighted = highlightedLineId === anchorId;
+                        return (
+                          <div key={`sanity-${index}`} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
+                            <div className="flex justify-end pb-1">
+                              <button
+                                onClick={() => handleSaveLineBookmark(anchorId, par)}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
+                                title="ഈ വരി ബുക്ക് മാർക്ക് ചെയ്യുക"
+                              >
+                                <Bookmark className="w-3 h-3 text-accent-main" />
+                                Bookmark
+                              </button>
+                            </div>
+                            <p
+                              style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
+                              className="text-text-body font-serif leading-relaxed text-justify"
+                            >
+                              {par}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : currentVerses.length > 0 ? (
                   currentVerses.map(([key, verse]) => {
                     const isVerseSpeaking = isSpeaking && speakingKey === key;
                     return (
@@ -1053,6 +1559,7 @@ export default function App() {
                           </span>
 
                           <div className="flex items-center gap-2">
+                            {renderPlaybackSpeedControl()}
                             {/* Verbatim Audio Reader button */}
                             <button
                               onClick={() => handleReadAloud(key, verse.text)}
@@ -1071,15 +1578,30 @@ export default function App() {
 
                         {/* Verbatim Malayalam Text paragraphs */}
                         <div className="space-y-3.5">
-                          {verse.text.map((par, index) => (
-                            <p 
-                              key={index}
-                              style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
-                              className="text-text-body font-serif leading-relaxed text-justify"
-                            >
-                              {par}
-                            </p>
-                          ))}
+                          {verse.text.map((par, index) => {
+                            const anchorId = `line-verse-${key}-${index}`;
+                            const isLineHighlighted = highlightedLineId === anchorId;
+                            return (
+                              <div key={index} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
+                                <div className="flex justify-end pb-1">
+                                  <button
+                                    onClick={() => handleSaveLineBookmark(anchorId, par)}
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
+                                    title="ഈ വരി ബുക്ക് മാർക്ക് ചെയ്യുക"
+                                  >
+                                    <Bookmark className="w-3 h-3 text-accent-main" />
+                                    Bookmark
+                                  </button>
+                                </div>
+                                <p 
+                                  style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
+                                  className="text-text-body font-serif leading-relaxed text-justify"
+                                >
+                                  {par}
+                                </p>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -1097,25 +1619,7 @@ export default function App() {
               </div>
 
               {/* SEQUENTIAL NAVIGATION BUTTONS */}
-              <div className="pt-6 border-t border-border-main/50 flex justify-between items-center gap-4">
-                <button
-                  onClick={handlePrev}
-                  disabled={activeIndex === 0}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 border border-border-main rounded-xl text-xs font-bold bg-bg-card text-text-title hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer font-serif"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>മുൻപത്തെ ഭാഗം</span>
-                </button>
-
-                <button
-                  onClick={handleNext}
-                  disabled={activeIndex === sequence.length - 1}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-accent-main text-black hover:bg-opacity-95 font-extrabold text-xs rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer shadow-sm font-serif"
-                >
-                  <span>അടുത്ത ഭാഗം</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+              {renderNavigationButtons()}
             </div>
           )}
 
@@ -1212,6 +1716,94 @@ export default function App() {
                   <span>WhatsApp</span>
                 </a>
               </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* HARDCOPY VOTE MODAL */}
+      <AnimatePresence>
+        {showHardcopyModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowHardcopyModal(false)}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="fixed inset-0 m-auto max-w-lg w-[92vw] h-fit bg-bg-card border border-border-main rounded-2xl shadow-2xl p-5 z-50"
+            >
+              <div className="flex justify-between items-center border-b border-border-main/50 pb-3 mb-4">
+                <h3 className="text-base font-bold text-text-title font-serif">ഹാർഡ് കോപ്പിക്കായുള്ള താൽപര്യ വോട്ട്</h3>
+                <button
+                  onClick={() => setShowHardcopyModal(false)}
+                  className="p-1 hover:bg-bg-subcard text-text-muted rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-[12px] text-text-muted font-serif leading-relaxed mb-4">
+                അച്ചടി നഷ്ടമില്ലാതെ തുടങ്ങാൻ ആവശ്യകത ശേഖരിക്കുന്നു. കൃത്യമായ എണ്ണം കാണിക്കില്ല; floating-book സൂചകം മുകളിലെത്തുമ്പോൾ ഹാർഡ് കോപ്പി പ്രിന്റ് ആരംഭിക്കുകയും താങ്കളെ അറിയിക്കുകയും ചെയ്യും.
+              </p>
+
+              <form onSubmit={handleSubmitHardcopyVote} className="space-y-3">
+                <input
+                  required
+                  value={hardcopyForm.name}
+                  onChange={(e) => setHardcopyForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="പേര് (Name)"
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <input
+                  value={hardcopyForm.phone}
+                  onChange={(e) => setHardcopyForm(prev => ({ ...prev, phone: e.target.value }))}
+                  placeholder="ഫോൺ നമ്പർ (Phone)"
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <input
+                  value={hardcopyForm.email}
+                  onChange={(e) => setHardcopyForm(prev => ({ ...prev, email: e.target.value }))}
+                  placeholder="ഇമെയിൽ (Email)"
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <textarea
+                  value={hardcopyForm.address}
+                  onChange={(e) => setHardcopyForm(prev => ({ ...prev, address: e.target.value }))}
+                  placeholder="മേൽവിലാസം (Address)"
+                  rows={3}
+                  className="w-full px-3 py-2.5 rounded-xl border border-border-main bg-bg-subcard text-text-title text-sm outline-none focus:border-accent-main resize-none"
+                />
+
+                {hardcopyMessage && (
+                  <p className={`text-xs font-bold ${hardcopySubmitState === "error" ? "text-rose-500" : "text-emerald-500"}`}>
+                    {hardcopyMessage}
+                  </p>
+                )}
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowHardcopyModal(false)}
+                    className="px-3 py-2 rounded-xl border border-border-main text-xs font-bold text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={hardcopySubmitState === "submitting"}
+                    className="px-4 py-2 rounded-xl bg-accent-main text-black text-xs font-extrabold disabled:opacity-50 transition-all"
+                  >
+                    {hardcopySubmitState === "submitting" ? "Submitting..." : "വോട്ട് സമർപ്പിക്കുക"}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </>
         )}

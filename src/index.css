@@ -50,3 +50,104 @@ html, body, #root {
   animation-delay: 0.4s;
   transform-origin: bottom;
 }
+
+/* Book page-turn loading animation */
+.book-loader {
+  width: 72px;
+  height: 52px;
+  position: relative;
+  perspective: 180px;
+}
+
+.book-loader-cover {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--color-accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-subcard) 85%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+.book-loader-page {
+  position: absolute;
+  top: 6px;
+  left: 34px;
+  width: 30px;
+  height: 40px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--bg-card) 92%, white 8%);
+  border: 1px solid color-mix(in srgb, var(--border-main) 75%, transparent);
+  transform-origin: left center;
+  animation: page-turn 1.35s ease-in-out infinite;
+}
+
+.book-loader-page.page-1 { animation-delay: 0s; }
+.book-loader-page.page-2 { animation-delay: 0.2s; }
+.book-loader-page.page-3 { animation-delay: 0.4s; }
+
+@keyframes page-turn {
+  0% {
+    transform: rotateY(0deg);
+    opacity: 0.95;
+  }
+  50% {
+    transform: rotateY(-170deg);
+    opacity: 0.65;
+  }
+  100% {
+    transform: rotateY(-180deg);
+    opacity: 0;
+  }
+}
+
+/* Hardcopy demand floating-book gauge */
+.hardcopy-float-gauge {
+  position: relative;
+  width: 74px;
+  min-width: 74px;
+  height: 140px;
+  border: 1px solid var(--border-main);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  overflow: hidden;
+}
+
+.hardcopy-float-track {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  transform: translateX(-50%);
+  width: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-main) 70%, transparent);
+}
+
+.hardcopy-float-book-stack {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  width: 42px;
+  height: 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 55%, var(--bg-subcard) 45%);
+  box-shadow: 0 -7px 0 color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.hardcopy-floating-icon {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  color: var(--color-accent);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  animation: float-book 2.2s ease-in-out infinite;
+}
+
+@keyframes float-book {
+  0%,
+  100% { transform: translateX(-50%) translateY(0px); }
+  50% { transform: translateX(-50%) translateY(-3px); }
+}
