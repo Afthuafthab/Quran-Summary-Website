@@ -1081,23 +1081,23 @@ export default function App() {
   };
 
   const renderNavigationButtons = () => (
-    <div className="pt-6 border-t border-border-main/50 flex justify-between items-center gap-4">
+    <div className="fixed right-3 sm:right-5 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
       <button
         onClick={handlePrev}
         disabled={activeIndex === 0}
-        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 border border-border-main rounded-xl text-xs font-bold bg-bg-card text-text-title hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer font-serif"
+        className="w-11 h-11 flex items-center justify-center border border-border-main rounded-xl text-text-title bg-bg-card hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+        title="മുൻപത്തെ ഭാഗം"
       >
-        <ChevronLeft className="w-4 h-4" />
-        <span>മുൻപത്തെ ഭാഗം</span>
+        <ChevronLeft className="w-5 h-5" />
       </button>
 
       <button
         onClick={handleNext}
         disabled={activeIndex === sequence.length - 1}
-        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-accent-main text-black hover:bg-opacity-95 font-extrabold text-xs rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all select-none cursor-pointer shadow-sm font-serif"
+        className="w-11 h-11 flex items-center justify-center rounded-xl bg-accent-main text-black hover:bg-opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+        title="അടുത്ത ഭാഗം"
       >
-        <span>അടുത്ത ഭാഗം</span>
-        <ChevronRight className="w-4 h-4" />
+        <ChevronRight className="w-5 h-5" />
       </button>
     </div>
   );
@@ -1346,6 +1346,29 @@ export default function App() {
               </div>
             )}
           </div>
+
+          <div className="p-3 border-t border-border-main bg-bg-app/40">
+            <div className="rounded-xl border border-border-main bg-bg-card/70 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-text-title font-serif">ഹാർഡ് കോപ്പി വോട്ട്</p>
+              <p className="text-[10px] text-text-muted font-serif leading-relaxed">
+                ഡാഷ്ബോർഡിൽ കാണിക്കാതെ ഇവിടെ മാറ്റിയിരിക്കുന്നു. താല്പര്യമുണ്ടെങ്കിൽ വോട്ട് ചെയ്യാം.
+              </p>
+              <button
+                onClick={() => {
+                  setShowHardcopyModal(true);
+                  setHardcopySubmitState("idle");
+                  setHardcopyMessage("");
+                  setSidebarOpen(false);
+                }}
+                className="w-full px-3 py-2 rounded-lg bg-accent-main text-black text-[11px] font-extrabold hover:bg-opacity-90 transition-all cursor-pointer"
+              >
+                ഹാർഡ് കോപ്പിക്കായി വോട്ട് ചെയ്യുക
+              </button>
+              {hardcopyStatus.hasVoted && (
+                <p className="text-[10px] text-emerald-500 font-bold">വോട്ട് രേഖപ്പെടുത്തിയിട്ടുണ്ട്</p>
+              )}
+            </div>
+          </div>
         </aside>
 
         {/* MOBILE SIDEBAR BACKGROUND SHADOW */}
@@ -1426,44 +1449,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Hardcopy demand voting widget (count hidden, visual float only) */}
-                  <div className="mt-4 border border-border-main rounded-2xl bg-bg-app/70 p-4">
-                    <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-text-title font-serif">ഹാർഡ് കോപ്പി ആവശ്യക്കാർക്കുള്ള വോട്ട്</p>
-                        <p className="text-[11px] text-text-muted font-serif leading-relaxed">
-                          പുസ്തകത്തിന്റെ അച്ചടി നഷ്ടമില്ലാതെ തുടങ്ങാൻ ആവശ്യകത ശേഖരിക്കുന്നു. കൃത്യമായ എണ്ണം കാണിക്കില്ല; താഴെയുള്ള floating-book സൂചകം മുകളിലെത്തുമ്പോൾ പ്രിന്റിംഗ് ആരംഭിക്കും.
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setShowHardcopyModal(true);
-                              setHardcopySubmitState("idle");
-                              setHardcopyMessage("");
-                            }}
-                            className="px-3 py-2 rounded-xl bg-accent-main text-black text-xs font-extrabold hover:bg-opacity-90 transition-all cursor-pointer"
-                          >
-                            ഹാർഡ് കോപ്പിക്കായി വോട്ട് ചെയ്യുക
-                          </button>
-                          {hardcopyStatus.hasVoted && (
-                            <span className="text-[10px] text-emerald-500 font-bold">വോട്ട് രേഖപ്പെടുത്തിയിട്ടുണ്ട്</span>
-                          )}
-                        </div>
-                        {hardcopyStatus.notifyEligible && (
-                          <p className="text-[10px] text-accent-main font-bold">പ്രിന്റിംഗ് ഘട്ടം എത്തി — ഉടൻ താങ്കളെ ബന്ധപ്പെടും.</p>
-                        )}
-                      </div>
-
-                      <div className="hardcopy-float-gauge">
-                        <div className="hardcopy-float-book-stack" />
-                        <div className="hardcopy-float-track" />
-                        <BookOpen
-                          className="hardcopy-floating-icon"
-                          style={{ bottom: `${Math.max(6, Math.min(92, hardcopyStatus.floatLevel))}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -1654,24 +1639,17 @@ export default function App() {
                     </button>
 
                     <button
-                      onClick={() => setSidebarOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-main text-[11px] font-bold bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
-                      title="മറ്റൊരു അധ്യായം ഉടൻ തിരഞ്ഞെടുക്കുക"
-                    >
-                      മറ്റൊരു അധ്യായം
-                    </button>
-
-                    <button
                       onClick={() => {
                         stopSpeaking();
                         setViewMode("dashboard");
                         setSelectedVolumeId(getVolumeForSection(activeSection));
                         scrollReaderToTop();
                       }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-main text-[11px] font-bold bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
-                      title="വാല്യങ്ങളിലേക്കു മടങ്ങുക"
+                      className="w-9 h-9 flex items-center justify-center rounded-xl border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
+                      title="വാല്യത്തിലേക്ക് മടങ്ങുക"
+                      aria-label="Back to volume"
                     >
-                      വാല്യത്തിലേക്ക് മടങ്ങുക
+                      <Home className="w-4 h-4" />
                     </button>
                   </div>
 
@@ -1715,9 +1693,6 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
-              {/* TOP SEQUENTIAL NAVIGATION BUTTONS */}
-              {renderNavigationButtons()}
 
               {/* Verbatim Content Listing */}
               <div className="space-y-6">
@@ -1890,12 +1865,12 @@ export default function App() {
                 )}
               </div>
 
-              {/* SEQUENTIAL NAVIGATION BUTTONS */}
-              {renderNavigationButtons()}
             </div>
           )}
 
         </main>
+
+        {viewMode === "reader" && renderNavigationButtons()}
       </div>
 
       {/* AUTHOR DETAILS MODAL (Verbatim Metadata Contact) */}
