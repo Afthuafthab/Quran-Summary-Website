@@ -250,6 +250,9 @@ export default function App() {
   const [sanityChapterContent, setSanityChapterContent] = useState<SanityChapterContent | null>(null);
   const [sanityChapterLoadState, setSanityChapterLoadState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
   const [isSectionLoading, setIsSectionLoading] = useState(false);
+  const sanityChapterCacheRef = useRef<Record<number, SanityChapterContent | null>>({});
+  const historySyncBlockedRef = useRef(false);
+  const historyBootstrappedRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -657,6 +660,11 @@ export default function App() {
     return { total, completed, percent };
   };
 
+  const quranSections = useMemo(() => sequence.filter((s) => s.type === "surah"), [sequence]);
+  const totalQuranChapters = quranSections.length;
+  const readQuranChapters = quranSections.filter((s) => readSections.includes(s.id)).length;
+  const quranProgressPercent = totalQuranChapters > 0 ? Math.round((readQuranChapters / totalQuranChapters) * 100) : 0;
+
   // Sync expanded volume state on active section change
   useEffect(() => {
     if (activeSection) {
@@ -666,6 +674,73 @@ export default function App() {
   }, [activeSectionId, activeSection]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || historyBootstrappedRef.current) return;
+
+    window.history.replaceState(
+      {
+        appViewMode: viewMode,
+        appActiveSectionId: activeSectionId,
+        appSelectedVolumeId: selectedVolumeId,
+      },
+      ""
+    );
+
+    historyBootstrappedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state as {
+        appViewMode?: "dashboard" | "reader";
+        appActiveSectionId?: string;
+        appSelectedVolumeId?: number | null;
+      } | null;
+
+      if (!state) return;
+
+      historySyncBlockedRef.current = true;
+      stopSpeaking();
+      setSidebarOpen(false);
+      setShowAuthorModal(false);
+      setShowHardcopyModal(false);
+
+      if (state.appViewMode === "dashboard" || state.appViewMode === "reader") {
+        setViewMode(state.appViewMode);
+      }
+      if (typeof state.appSelectedVolumeId === "number" || state.appSelectedVolumeId === null) {
+        setSelectedVolumeId(state.appSelectedVolumeId);
+      }
+      if (typeof state.appActiveSectionId === "string") {
+        setActiveSectionId(state.appActiveSectionId);
+      }
+
+      window.setTimeout(() => {
+        historySyncBlockedRef.current = false;
+      }, 0);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!historyBootstrappedRef.current) return;
+    if (historySyncBlockedRef.current) return;
+
+    window.history.pushState(
+      {
+        appViewMode: viewMode,
+        appActiveSectionId: activeSectionId,
+        appSelectedVolumeId: selectedVolumeId,
+      },
+      ""
+    );
+  }, [viewMode, activeSectionId, selectedVolumeId]);
+
+  useEffect(() => {
     const loadSanityChapter = async () => {
       if (activeSection.type !== "surah" || !activeSection.surahId) {
         setSanityChapterContent(null);
@@ -673,12 +748,21 @@ export default function App() {
         return;
       }
 
+      const chapterNumber = activeSection.surahId;
+      if (Object.prototype.hasOwnProperty.call(sanityChapterCacheRef.current, chapterNumber)) {
+        const cached = sanityChapterCacheRef.current[chapterNumber];
+        setSanityChapterContent(cached);
+        setSanityChapterLoadState(cached ? "ready" : "empty");
+        return;
+      }
+
       setSanityChapterLoadState("loading");
       try {
-        const response = await fetch(`/api/sanity/chapter?chapterNumber=${activeSection.surahId}`);
+        const response = await fetch(`/api/sanity/chapter?chapterNumber=${chapterNumber}`);
         const payload = await parseJsonSafe(response);
-        const data = payload?.data as SanityChapterContent | null;
+        const data = (payload?.chapter ?? payload?.data ?? null) as SanityChapterContent | null;
 
+        sanityChapterCacheRef.current[chapterNumber] = data;
         setSanityChapterContent(data);
         setSanityChapterLoadState(data ? "ready" : "empty");
       } catch (error) {
@@ -690,6 +774,28 @@ export default function App() {
 
     loadSanityChapter();
   }, [activeSection.id, activeSection.type, activeSection.surahId]);
+
+  useEffect(() => {
+    if (activeSection.type !== "surah") return;
+
+    const neighborIds = [
+      sequence[activeIndex - 1]?.surahId,
+      sequence[activeIndex + 1]?.surahId,
+    ].filter((id): id is number => typeof id === "number");
+
+    neighborIds.forEach((chapterNumber) => {
+      if (Object.prototype.hasOwnProperty.call(sanityChapterCacheRef.current, chapterNumber)) return;
+      fetch(`/api/sanity/chapter?chapterNumber=${chapterNumber}`)
+        .then((r) => parseJsonSafe(r))
+        .then((payload) => {
+          const data = (payload?.chapter ?? payload?.data ?? null) as SanityChapterContent | null;
+          sanityChapterCacheRef.current[chapterNumber] = data;
+        })
+        .catch(() => {
+          // ignore prefetch failure
+        });
+    });
+  }, [activeIndex, activeSection.type, sequence]);
 
   useEffect(() => {
     if (viewMode !== "reader") {
@@ -1422,7 +1528,7 @@ export default function App() {
                       <BookOpen className="w-4 h-4 text-accent-main" />
                       <div>
                         <p className="text-[9px] text-text-muted font-bold uppercase leading-none font-sans">അധ്യായങ്ങൾ</p>
-                        <p className="text-xs font-extrabold text-text-title mt-0.5 leading-none">118 Chapters</p>
+                        <p className="text-xs font-extrabold text-text-title mt-0.5 leading-none">{totalQuranChapters} Chapters</p>
                       </div>
                     </div>
 
@@ -1431,7 +1537,7 @@ export default function App() {
                       <div>
                         <p className="text-[9px] text-text-muted font-bold uppercase leading-none font-sans">വായിച്ചു തീർത്തവ</p>
                         <p className="text-xs font-extrabold text-text-title mt-0.5 leading-none">
-                          {readSections.length} / 118
+                          {readQuranChapters} / {totalQuranChapters}
                         </p>
                       </div>
                     </div>
@@ -1441,12 +1547,12 @@ export default function App() {
                   <div className="space-y-1.5 pt-2">
                     <div className="flex justify-between items-center text-[10px] font-bold text-text-muted uppercase font-sans">
                       <span>വായനാ പുരോഗതി (Reading Progress)</span>
-                      <span className="text-accent-main">{Math.round((readSections.length / 118) * 100)}%</span>
+                      <span className="text-accent-main">{quranProgressPercent}%</span>
                     </div>
                     <div className="h-2 w-full bg-bg-app border border-border-main rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-accent-main transition-all duration-500"
-                        style={{ width: `${Math.min(100, (readSections.length / 118) * 100)}%` }}
+                        style={{ width: `${Math.min(100, quranProgressPercent)}%` }}
                       />
                     </div>
                   </div>
