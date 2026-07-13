@@ -1085,19 +1085,21 @@ export default function App() {
       <button
         onClick={handlePrev}
         disabled={activeIndex === 0}
-        className="w-11 h-11 flex items-center justify-center border border-border-main rounded-xl text-text-title bg-bg-card hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
-        title="മുൻപത്തെ ഭാഗം"
+        className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 border border-border-main rounded-xl text-text-title bg-bg-card hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+        title="Previous Chapter"
       >
-        <ChevronLeft className="w-5 h-5" />
+        <ChevronLeft className="w-4 h-4" />
+        <span className="text-[11px] font-bold">Previous Chapter</span>
       </button>
 
       <button
         onClick={handleNext}
         disabled={activeIndex === sequence.length - 1}
-        className="w-11 h-11 flex items-center justify-center rounded-xl bg-accent-main text-black hover:bg-opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
-        title="അടുത്ത ഭാഗം"
+        className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 rounded-xl bg-accent-main text-black hover:bg-opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+        title="Next Chapter"
       >
-        <ChevronRight className="w-5 h-5" />
+        <span className="text-[11px] font-extrabold">Next Chapter</span>
+        <ChevronRight className="w-4 h-4" />
       </button>
     </div>
   );
@@ -1645,11 +1647,12 @@ export default function App() {
                         setSelectedVolumeId(getVolumeForSection(activeSection));
                         scrollReaderToTop();
                       }}
-                      className="w-9 h-9 flex items-center justify-center rounded-xl border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
-                      title="വാല്യത്തിലേക്ക് മടങ്ങുക"
-                      aria-label="Back to volume"
+                      className="h-9 px-2.5 flex items-center gap-1.5 rounded-xl border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
+                      title="Back to volumes"
+                      aria-label="Back to volumes"
                     >
-                      <Home className="w-4 h-4" />
+                      <ChevronLeft className="w-4 h-4" />
+                      <span className="text-[11px] font-bold">Back to volumes</span>
                     </button>
                   </div>
 
