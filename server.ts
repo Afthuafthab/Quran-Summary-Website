@@ -774,6 +774,9 @@ Structure the response exactly as a JSON object with:
         .replace(/\u200c|\u200d/g, "")
         .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
         .replace(/അല്-ലാഹു|അൽ-ലാഹു|അൽ ലാഹു/g, "അല്ലാഹൂ")
+        // Reference pronunciation normalization (e.g. 6:154-158, 14:4)
+        .replace(/(\d+)\s*:\s*(\d+)\s*-\s*(\d+)/g, (_m, s, a1, a2) => `സൂറത്ത് ${s} വചനം ${a1} മുതൽ ${a2} വരെ`)
+        .replace(/(\d+)\s*:\s*(\d+)/g, (_m, s, a) => `സൂറത്ത് ${s} വചനം ${a}`)
         .replace(/\s+/g, " ")
         .trim();
 
