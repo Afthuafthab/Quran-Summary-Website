@@ -1203,27 +1203,52 @@ export default function App() {
   };
 
   const renderNavigationButtons = () => (
-    <div className="fixed right-3 sm:right-5 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
-      <button
-        onClick={handlePrev}
-        disabled={activeIndex === 0}
-        className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 border border-border-main rounded-xl text-text-title bg-bg-card hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
-        title="Previous Chapter"
-      >
-        <ChevronLeft className="w-4 h-4" />
-        <span className="text-[11px] font-bold">Previous Chapter</span>
-      </button>
+    <>
+      {/* Desktop/tablet: fixed on right */}
+      <div className="hidden md:flex fixed right-3 lg:right-5 top-1/2 -translate-y-1/2 z-30 flex-col gap-2">
+        <button
+          onClick={handlePrev}
+          disabled={activeIndex === 0}
+          className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 border border-border-main rounded-xl text-text-title bg-bg-card hover:bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+          title="Previous Chapter"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span className="text-[11px] font-bold">Previous Chapter</span>
+        </button>
 
-      <button
-        onClick={handleNext}
-        disabled={activeIndex === sequence.length - 1}
-        className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 rounded-xl bg-accent-main text-black hover:bg-opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
-        title="Next Chapter"
-      >
-        <span className="text-[11px] font-extrabold">Next Chapter</span>
-        <ChevronRight className="w-4 h-4" />
-      </button>
-    </div>
+        <button
+          onClick={handleNext}
+          disabled={activeIndex === sequence.length - 1}
+          className="min-w-[132px] h-11 px-3 flex items-center justify-center gap-2 rounded-xl bg-accent-main text-black hover:bg-opacity-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm cursor-pointer"
+          title="Next Chapter"
+        >
+          <span className="text-[11px] font-extrabold">Next Chapter</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Mobile: dock at bottom so content is not covered */}
+      <div className="md:hidden fixed bottom-3 left-3 right-3 z-30 grid grid-cols-2 gap-2 rounded-2xl border border-border-main bg-bg-card/95 backdrop-blur-sm p-2 shadow-lg">
+        <button
+          onClick={handlePrev}
+          disabled={activeIndex === 0}
+          className="h-10 px-2 flex items-center justify-center gap-1.5 border border-border-main rounded-lg text-text-title bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+          title="Previous Chapter"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span className="text-[10px] font-bold">Previous Chapter</span>
+        </button>
+        <button
+          onClick={handleNext}
+          disabled={activeIndex === sequence.length - 1}
+          className="h-10 px-2 flex items-center justify-center gap-1.5 rounded-lg bg-accent-main text-black disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+          title="Next Chapter"
+        >
+          <span className="text-[10px] font-extrabold">Next Chapter</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </>
   );
 
   useEffect(() => {
