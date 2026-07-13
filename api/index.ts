@@ -1,3 +1,336 @@
-import handler from "../server";
+import express from "express";
+import path from "path";
+import { promises as fs } from "fs";
+import { createClient } from "@sanity/client";
 
-export default handler;
+const sanityClient = createClient({
+  projectId: process.env.VITE_SANITY_PROJECT_ID || "lgqos9pf",
+  dataset: process.env.VITE_SANITY_DATASET || "production",
+  apiVersion: process.env.VITE_SANITY_API_VERSION || "2025-07-01",
+  useCdn: false,
+});
+
+const ADMIN_USER_ID = process.env.ADMIN_USER_ID || "test";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "test@123";
+const HARD_COPY_TARGET = Math.max(50, Number(process.env.HARD_COPY_TARGET || 100));
+
+const DATA_DIR = process.env.VERCEL ? "/tmp" : path.join(process.cwd(), "data");
+const HARD_COPY_STORE_PATH = path.join(DATA_DIR, "hardcopy_votes.json");
+const BETA_REPORT_STORE_PATH = path.join(DATA_DIR, "beta_reports.json");
+
+type HardCopyVote = {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  email?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BetaReport = {
+  id: string;
+  chapterId: string;
+  sectionId: string;
+  sectionTitle: string;
+  anchorId: string;
+  originalText: string;
+  suggestedText: string;
+  issueType: string;
+  note?: string;
+  reporterName?: string;
+  reporterContact?: string;
+  status: "new" | "reviewing" | "fixed" | "rejected";
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const ensureStore = async <T>(filePath: string, fallback: T) => {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  try {
+    await fs.access(filePath);
+  } catch {
+    await fs.writeFile(filePath, JSON.stringify(fallback, null, 2), "utf8");
+  }
+};
+
+const readJson = async <T>(filePath: string, fallback: T): Promise<T> => {
+  await ensureStore(filePath, fallback);
+  const raw = await fs.readFile(filePath, "utf8");
+  return JSON.parse(raw || JSON.stringify(fallback)) as T;
+};
+
+const writeJson = async <T>(filePath: string, value: T) => {
+  await fs.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+};
+
+const buildDemandVisual = (count: number) => {
+  const progress = Math.max(0, Math.min(100, Math.round((count / HARD_COPY_TARGET) * 100)));
+  const targetReached = count >= HARD_COPY_TARGET;
+
+  let stage = "collecting";
+  if (targetReached) stage = "ready_to_print";
+  else if (progress >= 75) stage = "almost_ready";
+  else if (progress >= 40) stage = "building";
+
+  return { progress, stage, targetReached };
+};
+
+const isAdminAllowed = (req: express.Request) => {
+  const providedUser = String(req.headers["x-admin-user-id"] || "").trim();
+  const providedPass = String(req.headers["x-admin-password"] || "").trim();
+  return providedUser === ADMIN_USER_ID && providedPass === ADMIN_PASSWORD;
+};
+
+let appPromise: Promise<express.Express> | null = null;
+
+const getApp = async () => {
+  if (appPromise) return appPromise;
+
+  appPromise = (async () => {
+    const app = express();
+    app.use(express.json({ limit: "1mb" }));
+
+    app.get("/api/health", (req, res) => {
+      res.json({ status: "ok" });
+    });
+
+    app.get("/api/sanity/chapter", async (req, res) => {
+      const chapterNumber = String(req.query.chapterNumber || "").trim();
+      if (!chapterNumber) {
+        return res.status(400).json({ status: "error", message: "chapterNumber is required" });
+      }
+
+      try {
+        const chapter = await sanityClient.fetch(
+          `*[_type == "chapter" && chapterNumber == $chapterNumber][0]{_id, title, chapterNumber, content, body}`,
+          { chapterNumber: Number(chapterNumber) }
+        );
+
+        if (!chapter) {
+          return res.status(404).json({ status: "error", message: "Chapter not found" });
+        }
+
+        return res.json({ status: "success", chapter });
+      } catch (error) {
+        console.error("Sanity chapter fetch error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to fetch chapter" });
+      }
+    });
+
+    app.get("/api/hardcopy-vote/status", async (req, res) => {
+      try {
+        const voteId = String(req.query.voteId || "").trim();
+        const store = await readJson<{ votes: HardCopyVote[] }>(HARD_COPY_STORE_PATH, { votes: [] });
+        const demand = buildDemandVisual(store.votes.length);
+        const hasVoted = Boolean(voteId && store.votes.some((v) => v.id === voteId));
+
+        return res.json({
+          status: "success",
+          hasVoted,
+          targetReached: demand.targetReached,
+          demandStage: demand.stage,
+          floatLevel: demand.progress,
+          notifyEligible: hasVoted && demand.targetReached,
+        });
+      } catch (error) {
+        console.error("Hard copy status error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to load hard copy status" });
+      }
+    });
+
+    app.post("/api/hardcopy-vote", async (req, res) => {
+      const name = String(req.body?.name || "").trim();
+      const phone = String(req.body?.phone || "").trim();
+      const address = String(req.body?.address || "").trim();
+      const email = String(req.body?.email || "").trim();
+      const existingVoteId = String(req.body?.voteId || "").trim();
+
+      if (!name) {
+        return res.status(400).json({ status: "error", message: "Name is required" });
+      }
+
+      try {
+        const store = await readJson<{ votes: HardCopyVote[] }>(HARD_COPY_STORE_PATH, { votes: [] });
+        const now = new Date().toISOString();
+
+        let voteId = existingVoteId;
+        const existing = voteId ? store.votes.find((v) => v.id === voteId) : null;
+
+        if (existing) {
+          existing.name = name;
+          existing.phone = phone || existing.phone;
+          existing.address = address || existing.address;
+          existing.email = email || existing.email;
+          existing.updatedAt = now;
+        } else {
+          voteId = `vote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          store.votes.push({ id: voteId, name, phone: phone || undefined, address: address || undefined, email: email || undefined, createdAt: now, updatedAt: now });
+        }
+
+        await writeJson(HARD_COPY_STORE_PATH, store);
+        const demand = buildDemandVisual(store.votes.length);
+
+        return res.json({ status: "success", voteId, targetReached: demand.targetReached, demandStage: demand.stage, floatLevel: demand.progress });
+      } catch (error) {
+        console.error("Hard copy vote submit error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to submit vote" });
+      }
+    });
+
+    app.post("/api/admin/login", (req, res) => {
+      const userId = String(req.body?.userId || "").trim();
+      const password = String(req.body?.password || "").trim();
+
+      if (userId === ADMIN_USER_ID && password === ADMIN_PASSWORD) {
+        return res.json({ status: "success" });
+      }
+      return res.status(401).json({ status: "error", message: "Invalid admin credentials" });
+    });
+
+    app.post("/api/beta-report", async (req, res) => {
+      const chapterId = String(req.body?.chapterId || "").trim();
+      const sectionId = String(req.body?.sectionId || "").trim();
+      const sectionTitle = String(req.body?.sectionTitle || "").trim();
+      const anchorId = String(req.body?.anchorId || "").trim();
+      const originalText = String(req.body?.originalText || "").trim();
+      const suggestedText = String(req.body?.suggestedText || "").trim();
+      const issueType = String(req.body?.issueType || "").trim() || "text-error";
+      const note = String(req.body?.note || "").trim();
+      const reporterName = String(req.body?.reporterName || "").trim();
+      const reporterContact = String(req.body?.reporterContact || "").trim();
+
+      if (!sectionId || !anchorId || !originalText) {
+        return res.status(400).json({ status: "error", message: "Missing report context" });
+      }
+      if (!suggestedText && !note) {
+        return res.status(400).json({ status: "error", message: "Provide corrected text or note" });
+      }
+
+      try {
+        const store = await readJson<{ reports: BetaReport[] }>(BETA_REPORT_STORE_PATH, { reports: [] });
+        const now = new Date().toISOString();
+        const reportId = `rep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+        store.reports.unshift({ id: reportId, chapterId, sectionId, sectionTitle, anchorId, originalText, suggestedText, issueType, note: note || undefined, reporterName: reporterName || undefined, reporterContact: reporterContact || undefined, status: "new", createdAt: now, updatedAt: now });
+        await writeJson(BETA_REPORT_STORE_PATH, store);
+
+        return res.json({ status: "success", reportId });
+      } catch (error) {
+        console.error("Beta report submit error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to submit report" });
+      }
+    });
+
+    app.get("/api/admin/beta-reports", async (req, res) => {
+      if (!isAdminAllowed(req)) {
+        return res.status(401).json({ status: "error", message: "Unauthorized" });
+      }
+      try {
+        const store = await readJson<{ reports: BetaReport[] }>(BETA_REPORT_STORE_PATH, { reports: [] });
+        return res.json({ status: "success", reports: store.reports });
+      } catch (error) {
+        console.error("Beta reports list error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to load reports" });
+      }
+    });
+
+    app.patch("/api/admin/beta-reports/:id", async (req, res) => {
+      if (!isAdminAllowed(req)) {
+        return res.status(401).json({ status: "error", message: "Unauthorized" });
+      }
+
+      const reportId = String(req.params.id || "").trim();
+      const nextStatus = String(req.body?.status || "").trim() as BetaReport["status"];
+      const resolutionNote = String(req.body?.resolutionNote || "").trim();
+
+      if (!reportId || !["new", "reviewing", "fixed", "rejected"].includes(nextStatus)) {
+        return res.status(400).json({ status: "error", message: "Invalid report update request" });
+      }
+
+      try {
+        const store = await readJson<{ reports: BetaReport[] }>(BETA_REPORT_STORE_PATH, { reports: [] });
+        const target = store.reports.find((r) => r.id === reportId);
+        if (!target) {
+          return res.status(404).json({ status: "error", message: "Report not found" });
+        }
+
+        target.status = nextStatus;
+        target.updatedAt = new Date().toISOString();
+        target.resolutionNote = resolutionNote || undefined;
+
+        await writeJson(BETA_REPORT_STORE_PATH, store);
+        return res.json({ status: "success", report: target });
+      } catch (error) {
+        console.error("Beta report update error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to update report" });
+      }
+    });
+
+    app.get("/api/tts", async (req, res) => {
+      const text = String(req.query.text || "").trim();
+      if (!text) {
+        return res.status(400).json({ status: "error", message: "Text query parameter is required" });
+      }
+
+      try {
+        const normalizedText = text
+          .substring(0, 1500)
+          .replace(/\u200c|\u200d/g, "")
+          .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
+          .replace(/അല്-ലാഹു|അൽ-ലാഹു|അൽ ലാഹു/g, "അല്ലാഹൂ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (!normalizedText) {
+          return res.status(400).json({ status: "error", message: "Text not usable after normalization" });
+        }
+
+        const chunks = normalizedText.match(/.{1,160}(\s|$)/g) || [normalizedText];
+        const audioBuffers: Buffer[] = [];
+
+        for (const chunk of chunks) {
+          const cleanChunk = chunk.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+          if (!cleanChunk) continue;
+
+          const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ml&client=gtx&q=${encodeURIComponent(cleanChunk)}`;
+          const response = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              Referer: "https://translate.google.com/",
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to fetch audio chunk: ${response.status}`);
+          }
+
+          const arrayBuffer = await response.arrayBuffer();
+          audioBuffers.push(Buffer.from(arrayBuffer));
+        }
+
+        if (audioBuffers.length === 0) {
+          return res.status(500).json({ status: "error", message: "No audio generated" });
+        }
+
+        const mergedAudio = Buffer.concat(audioBuffers);
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "public, max-age=300");
+        return res.send(mergedAudio);
+      } catch (error) {
+        console.error("TTS proxy error:", error);
+        return res.status(500).json({ status: "error", message: "Failed to generate Malayalam audio" });
+      }
+    });
+
+    return app;
+  })();
+
+  return appPromise;
+};
+
+export default async function handler(req: any, res: any) {
+  const app = await getApp();
+  return app(req, res);
+}
