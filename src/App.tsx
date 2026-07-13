@@ -1204,8 +1204,33 @@ export default function App() {
 
   const renderNavigationButtons = () => (
     <>
-      {/* Desktop/tablet: fixed on right */}
+      {/* Desktop/tablet: comfort controls + nav fixed on right */}
       <div className="hidden md:flex fixed right-3 lg:right-5 top-1/2 -translate-y-1/2 z-30 flex-col gap-2">
+        <div className="rounded-xl border border-border-main bg-bg-card/95 backdrop-blur-sm p-2 flex items-center gap-1.5 shadow-sm">
+          <button
+            onClick={() => setFontDelta(prev => Math.max(-4, prev - 2))}
+            className="w-8 h-8 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="വലുപ്പം കുറയ്ക്കുക (A-)"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] font-bold text-text-muted min-w-[26px] text-center">A{fontDelta >= 0 ? `+${fontDelta}` : fontDelta}</span>
+          <button
+            onClick={() => setFontDelta(prev => Math.min(10, prev + 2))}
+            className="w-8 h-8 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="വലുപ്പം കൂട്ടുക (A+)"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setTheme(prev => prev === "midnight" ? "white" : "midnight")}
+            className="w-8 h-8 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="പശ്ചാത്തലം മാറ്റുക"
+          >
+            {theme === "midnight" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
         <button
           onClick={handlePrev}
           disabled={activeIndex === 0}
@@ -1227,26 +1252,55 @@ export default function App() {
         </button>
       </div>
 
-      {/* Mobile: dock at bottom so content is not covered */}
-      <div className="md:hidden fixed bottom-3 left-3 right-3 z-30 grid grid-cols-2 gap-2 rounded-2xl border border-border-main bg-bg-card/95 backdrop-blur-sm p-2 shadow-lg">
-        <button
-          onClick={handlePrev}
-          disabled={activeIndex === 0}
-          className="h-10 px-2 flex items-center justify-center gap-1.5 border border-border-main rounded-lg text-text-title bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
-          title="Previous Chapter"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          <span className="text-[10px] font-bold">Previous Chapter</span>
-        </button>
-        <button
-          onClick={handleNext}
-          disabled={activeIndex === sequence.length - 1}
-          className="h-10 px-2 flex items-center justify-center gap-1.5 rounded-lg bg-accent-main text-black disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
-          title="Next Chapter"
-        >
-          <span className="text-[10px] font-extrabold">Next Chapter</span>
-          <ChevronRight className="w-4 h-4" />
-        </button>
+      {/* Mobile: bottom dock with comfort controls + nav */}
+      <div className="md:hidden fixed bottom-3 left-3 right-3 z-30 rounded-2xl border border-border-main bg-bg-card/95 backdrop-blur-sm p-2 shadow-lg space-y-2">
+        <div className="grid grid-cols-4 gap-2">
+          <button
+            onClick={() => setFontDelta(prev => Math.max(-4, prev - 2))}
+            className="h-9 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="വലുപ്പം കുറയ്ക്കുക (A-)"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+          <div className="h-9 rounded-lg border border-border-main bg-bg-subcard text-text-muted text-[10px] font-bold flex items-center justify-center">
+            A{fontDelta >= 0 ? `+${fontDelta}` : fontDelta}
+          </div>
+          <button
+            onClick={() => setFontDelta(prev => Math.min(10, prev + 2))}
+            className="h-9 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="വലുപ്പം കൂട്ടുക (A+)"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setTheme(prev => prev === "midnight" ? "white" : "midnight")}
+            className="h-9 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
+            title="പശ്ചാത്തലം മാറ്റുക"
+          >
+            {theme === "midnight" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={handlePrev}
+            disabled={activeIndex === 0}
+            className="h-10 px-2 flex items-center justify-center gap-1.5 border border-border-main rounded-lg text-text-title bg-bg-subcard disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+            title="Previous Chapter"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="text-[10px] font-bold">Previous Chapter</span>
+          </button>
+          <button
+            onClick={handleNext}
+            disabled={activeIndex === sequence.length - 1}
+            className="h-10 px-2 flex items-center justify-center gap-1.5 rounded-lg bg-accent-main text-black disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+            title="Next Chapter"
+          >
+            <span className="text-[10px] font-extrabold">Next Chapter</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </>
   );
