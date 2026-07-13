@@ -497,9 +497,23 @@ export default function App() {
   }, [showAdminPanel]);
 
   useEffect(() => {
-    if (viewMode === "reader") {
-      setIsSectionLoading(true);
+    if (viewMode !== "reader") {
+      setIsSectionLoading(false);
+      return;
     }
+
+    const surahMatch = activeSectionId.match(/^surah_(\d+)$/);
+    if (surahMatch) {
+      const surahId = Number(surahMatch[1]);
+      const hasCached = Object.prototype.hasOwnProperty.call(
+        sanityChapterCacheRef.current,
+        surahId
+      );
+      setIsSectionLoading(!hasCached);
+      return;
+    }
+
+    setIsSectionLoading(true);
   }, [activeSectionId, viewMode]);
 
   // Apply Theme CSS variables to root element
@@ -778,10 +792,10 @@ export default function App() {
   useEffect(() => {
     if (activeSection.type !== "surah") return;
 
-    const neighborIds = [
-      sequence[activeIndex - 1]?.surahId,
-      sequence[activeIndex + 1]?.surahId,
-    ].filter((id): id is number => typeof id === "number");
+    const offsets = [1, 2, 3, -1, -2];
+    const neighborIds = offsets
+      .map((offset) => sequence[activeIndex + offset]?.surahId)
+      .filter((id): id is number => typeof id === "number");
 
     neighborIds.forEach((chapterNumber) => {
       if (Object.prototype.hasOwnProperty.call(sanityChapterCacheRef.current, chapterNumber)) return;
