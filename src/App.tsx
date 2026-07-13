@@ -1639,18 +1639,41 @@ export default function App() {
                 )}
 
                 {/* Read status check */}
-                <div className="mt-4 flex items-center justify-between">
-                  <button 
-                    onClick={() => toggleReadStatus(activeSection.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
-                      readSections.includes(activeSection.id)
-                        ? "bg-[#2e7d32]/10 border-emerald-500/30 text-emerald-500"
-                        : "bg-bg-subcard border-border-main text-text-muted hover:bg-bg-card"
-                    }`}
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    {readSections.includes(activeSection.id) ? "വായിച്ചു തീർത്തു" : "വായിച്ചതായി അടയാളപ്പെടുത്തുക"}
-                  </button>
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button 
+                      onClick={() => toggleReadStatus(activeSection.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                        readSections.includes(activeSection.id)
+                          ? "bg-[#2e7d32]/10 border-emerald-500/30 text-emerald-500"
+                          : "bg-bg-subcard border-border-main text-text-muted hover:bg-bg-card"
+                      }`}
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      {readSections.includes(activeSection.id) ? "വായിച്ചു തീർത്തു" : "വായിച്ചതായി അടയാളപ്പെടുത്തുക"}
+                    </button>
+
+                    <button
+                      onClick={() => setSidebarOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-main text-[11px] font-bold bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
+                      title="മറ്റൊരു അധ്യായം ഉടൻ തിരഞ്ഞെടുക്കുക"
+                    >
+                      മറ്റൊരു അധ്യായം
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        stopSpeaking();
+                        setViewMode("dashboard");
+                        setSelectedVolumeId(getVolumeForSection(activeSection));
+                        scrollReaderToTop();
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-main text-[11px] font-bold bg-bg-subcard text-text-title hover:bg-bg-card transition-all cursor-pointer"
+                      title="വാല്യങ്ങളിലേക്കു മടങ്ങുക"
+                    >
+                      വാല്യത്തിലേക്ക് മടങ്ങുക
+                    </button>
+                  </div>
 
                   {activeSection.versesCount && (
                     <span className="text-xs font-mono text-text-muted">Total: {activeSection.versesCount} Verses</span>
