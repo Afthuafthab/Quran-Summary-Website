@@ -36,10 +36,9 @@ const sanityClient = createClient({
   useCdn: false,
 });
 
-async function startServer() {
+async function startServer(options: { serveFrontend?: boolean } = {}) {
+  const serveFrontend = options.serveFrontend ?? true;
   const app = express();
-  const PORT = Number(process.env.PORT || 3000);
-  const HOST = process.env.HOST || "0.0.0.0";
 
   app.use(express.json());
 
@@ -1149,23 +1148,50 @@ The explanation field must be in elegant Malayalam.
   });
 
   // Vite and production fallback
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+  if (serveFrontend) {
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
 
-  app.listen(PORT, HOST, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  return app;
 }
 
-startServer();
+let cachedApiApp: Promise<express.Express> | null = null;
+
+const getApiApp = () => {
+  if (!cachedApiApp) {
+    cachedApiApp = startServer({ serveFrontend: false });
+  }
+  return cachedApiApp;
+};
+
+export default async function handler(req: any, res: any) {
+  const app = await getApiApp();
+  return app(req, res);
+}
+
+if (!process.env.VERCEL) {
+  startServer({ serveFrontend: true })
+    .then((app) => {
+      const PORT = Number(process.env.PORT || 3000);
+      const HOST = process.env.HOST || "0.0.0.0";
+      app.listen(PORT, HOST, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to start server:", error);
+      process.exit(1);
+    });
+}
