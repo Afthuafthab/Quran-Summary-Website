@@ -281,6 +281,16 @@ export default function App() {
     }
   };
 
+  const normalizeMalayalamSpacing = (text: string) => {
+    return text
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")")
+      .trim();
+  };
+
   const loadHardcopyStatus = async () => {
     try {
       const voteId = localStorage.getItem("quran_hardcopy_vote_id") || "";
@@ -764,7 +774,7 @@ export default function App() {
 
     return raw
       .split(/\r?\n\r?\n|\r?\n/)
-      .map((part) => part.trim())
+      .map((part) => normalizeMalayalamSpacing(part.trim()))
       .filter(Boolean);
   }, [sanityChapterContent]);
 
@@ -808,7 +818,7 @@ export default function App() {
     setIsSpeaking(true);
     setSpeakingKey(key);
 
-    const fullText = textArray.join(" ");
+    const fullText = textArray.map(normalizeMalayalamSpacing).join(" ");
     const cleanText = fullText
       .replace(/\(\s*\d+:\s*\d+\s*\)/g, "")
       // Pronunciation normalization for key Arabic-origin terms in Malayalam TTS
@@ -953,7 +963,8 @@ export default function App() {
     introSections.forEach(sec => {
       if (sec.key && allQuranData[sec.key]) {
         const v = allQuranData[sec.key];
-        const matchPar = v.text.find(p => p.toLowerCase().includes(query));
+        const normalizedParagraphs = v.text.map(normalizeMalayalamSpacing);
+        const matchPar = normalizedParagraphs.find(p => p.toLowerCase().includes(query));
         if (matchPar) {
           results.push({ key: sec.key, verse: v, section: sec, matchingParagraph: matchPar });
         }
@@ -966,7 +977,8 @@ export default function App() {
       if (sec.surahId) {
         const vList = getVersesForSurah(sec.surahId);
         vList.forEach(([key, verse]) => {
-          const matchPar = verse.text.find(p => p.toLowerCase().includes(query));
+          const normalizedParagraphs = verse.text.map(normalizeMalayalamSpacing);
+          const matchPar = normalizedParagraphs.find(p => p.toLowerCase().includes(query));
           if (matchPar) {
             results.push({ key, verse, section: sec, matchingParagraph: matchPar });
           }
@@ -1008,7 +1020,7 @@ export default function App() {
   };
 
   const handleSaveLineBookmark = (anchorId: string, previewText: string) => {
-    const preview = previewText.trim().replace(/\s+/g, " ").slice(0, 90);
+    const preview = normalizeMalayalamSpacing(previewText).slice(0, 90);
     setLineBookmark({
       sectionId: activeSection.id,
       anchorId,
@@ -1100,7 +1112,7 @@ export default function App() {
     <div className={`min-h-screen flex flex-col font-sans text-text-body bg-bg-app transition-colors duration-300`}>
       
       {/* HEADER */}
-      <header className="sticky top-0 z-40 bg-bg-header border-b border-border-main py-4 px-4 sm:px-6 flex justify-between items-center transition-colors duration-300 shadow-sm">
+      <header className="sticky top-0 z-40 bg-bg-header border-b border-border-main py-3 sm:py-4 px-3 sm:px-6 flex justify-between items-center gap-2 transition-colors duration-300 shadow-sm">
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -1113,14 +1125,14 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Book className="w-5 h-5 text-accent-main" />
             <div>
-              <h1 className="text-sm sm:text-base font-bold text-text-title font-serif leading-none">ഖുർആൻ സംക്ഷിപ്ത അവലോകനം</h1>
-              <p className="text-[10px] text-text-muted mt-0.5 font-serif">Malayalam Quran Summary E-Reader</p>
+              <h1 className="text-xs sm:text-base font-bold text-text-title font-serif leading-none">ഖുർആൻ സംക്ഷിപ്ത അവലോകനം</h1>
+              <p className="hidden sm:block text-[10px] text-text-muted mt-0.5 font-serif">Malayalam Quran Summary E-Reader</p>
             </div>
           </div>
         </div>
 
         {/* Accessibility & Settings Controls */}
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex items-center gap-1.5 sm:gap-4 max-w-[54vw] sm:max-w-none overflow-x-auto">
           
           {/* Dashboard Button */}
           <button 
@@ -1129,7 +1141,7 @@ export default function App() {
               setSelectedVolumeId(null);
               stopSpeaking();
             }}
-            className={`p-2.5 border rounded-xl flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
+            className={`p-2 sm:p-2.5 border rounded-xl flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${
               viewMode === "dashboard"
                 ? "bg-accent-main text-black border-accent-main shadow-sm font-extrabold font-serif"
                 : "bg-bg-subcard border-border-main text-text-title hover:bg-bg-card font-serif"
@@ -1141,7 +1153,7 @@ export default function App() {
           </button>
 
           {/* Font Size Adjusters */}
-          <div className="flex items-center border border-border-main rounded-xl bg-bg-subcard p-1">
+          <div className="hidden sm:flex items-center border border-border-main rounded-xl bg-bg-subcard p-1">
             <button 
               onClick={() => setFontDelta(prev => Math.max(-4, prev - 2))}
               className="p-1 hover:bg-bg-card rounded-lg text-text-title transition-all"
@@ -1162,7 +1174,7 @@ export default function App() {
           {/* Theme Toggle */}
           <button 
             onClick={() => setTheme(prev => prev === "midnight" ? "white" : "midnight")}
-            className="p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all"
+            className="p-2 sm:p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all"
             title="പശ്ചാത്തലം മാറ്റുക"
           >
             {theme === "midnight" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
@@ -1171,7 +1183,7 @@ export default function App() {
           {/* Author Info */}
           <button 
             onClick={() => setShowAuthorModal(true)}
-            className="p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all flex items-center gap-1.5 text-xs font-semibold"
+            className="p-2 sm:p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all flex items-center gap-1.5 text-xs font-semibold"
             title="വിവരങ്ങൾ"
           >
             <Info className="w-4 h-4 text-accent-main" />
@@ -1181,7 +1193,7 @@ export default function App() {
           {/* Developer Admin Panel */}
           <button
             onClick={() => setShowAdminPanel(true)}
-            className="p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all"
+            className="p-2 sm:p-2.5 bg-bg-subcard hover:bg-bg-card border border-border-main rounded-xl text-text-title transition-all"
             title="Developer panel"
           >
             <Shield className="w-4 h-4 text-accent-main" />
@@ -1194,11 +1206,11 @@ export default function App() {
         
         {/* SIDEBAR: TABLE OF CONTENTS (Chronological Sequence) */}
         <aside className={`
-          fixed lg:sticky top-[73px] bottom-0 left-0 z-30
-          w-[290px] sm:w-[320px] lg:w-[340px]
+          fixed lg:sticky top-[64px] sm:top-[73px] bottom-0 left-0 z-30
+          w-[86vw] max-w-[320px] lg:w-[340px]
           bg-bg-sidebar border-r border-border-main
           transform lg:transform-none transition-transform duration-300 ease-in-out
-          flex flex-col h-[calc(100vh-73px)]
+          flex flex-col h-[calc(100vh-64px)] sm:h-[calc(100vh-73px)]
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
         `}>
           {/* Local exact-match Search */}
@@ -1350,7 +1362,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* MAIN READER WINDOW or DASHBOARD */}
-        <main ref={mainScrollRef} className={`flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto mx-auto space-y-8 pb-32 transition-all duration-300 ${viewMode === "dashboard" ? "max-w-5xl w-full" : "max-w-4xl"}`}>
+        <main ref={mainScrollRef} className={`flex-1 p-3 sm:p-6 lg:p-8 overflow-y-auto mx-auto space-y-6 sm:space-y-8 pb-28 sm:pb-32 transition-all duration-300 ${viewMode === "dashboard" ? "max-w-5xl w-full" : "max-w-4xl w-full"}`}>
           
           {viewMode === "dashboard" ? (
             <div className="space-y-8">
@@ -1416,7 +1428,7 @@ export default function App() {
 
                   {/* Hardcopy demand voting widget (count hidden, visual float only) */}
                   <div className="mt-4 border border-border-main rounded-2xl bg-bg-app/70 p-4">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
                       <div className="space-y-2">
                         <p className="text-xs font-bold text-text-title font-serif">ഹാർഡ് കോപ്പി ആവശ്യക്കാർക്കുള്ള വോട്ട്</p>
                         <p className="text-[11px] text-text-muted font-serif leading-relaxed">
@@ -1725,13 +1737,14 @@ export default function App() {
 
                     <div className="space-y-3.5">
                       {sanityChapterParagraphs.map((par, index) => {
+                        const normalizedPar = normalizeMalayalamSpacing(par);
                         const anchorId = `line-sanity-${activeSection.id}-${index}`;
                         const isLineHighlighted = highlightedLineId === anchorId;
                         return (
                           <div key={`sanity-${index}`} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
                             <div className="flex justify-end gap-1.5 pb-1">
                               <button
-                                onClick={() => handleSaveLineBookmark(anchorId, par)}
+                                onClick={() => handleSaveLineBookmark(anchorId, normalizedPar)}
                                 className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
                                 title="ഈ വരി ബുക്ക് മാർക്ക് ചെയ്യുക"
                               >
@@ -1744,7 +1757,7 @@ export default function App() {
                                   sectionId: activeSection.id,
                                   sectionTitle: activeSection.title,
                                   anchorId,
-                                  originalText: par,
+                                  originalText: normalizedPar,
                                 })}
                                 className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
                                 title="ഈ വരിയിൽ പിശക് റിപ്പോർട്ട് ചെയ്യുക"
@@ -1757,7 +1770,7 @@ export default function App() {
                               style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                               className="text-text-body font-serif leading-relaxed text-justify"
                             >
-                              {par}
+                              {normalizedPar}
                             </p>
                           </div>
                         );
@@ -1800,13 +1813,14 @@ export default function App() {
                         {/* Verbatim Malayalam Text paragraphs */}
                         <div className="space-y-3.5">
                           {verse.text.map((par, index) => {
+                            const normalizedPar = normalizeMalayalamSpacing(par);
                             const anchorId = `line-verse-${key}-${index}`;
                             const isLineHighlighted = highlightedLineId === anchorId;
                             return (
                               <div key={index} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
                                 <div className="flex justify-end gap-1.5 pb-1">
                                   <button
-                                    onClick={() => handleSaveLineBookmark(anchorId, par)}
+                                    onClick={() => handleSaveLineBookmark(anchorId, normalizedPar)}
                                     className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
                                     title="ഈ വരി ബുക്ക് മാർക്ക് ചെയ്യുക"
                                   >
@@ -1819,7 +1833,7 @@ export default function App() {
                                       sectionId: activeSection.id,
                                       sectionTitle: activeSection.title,
                                       anchorId,
-                                      originalText: par,
+                                      originalText: normalizedPar,
                                     })}
                                     className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border border-border-main text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
                                     title="ഈ വരിയിൽ പിശക് റിപ്പോർട്ട് ചെയ്യുക"
@@ -1832,7 +1846,7 @@ export default function App() {
                                   style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                                   className="text-text-body font-serif leading-relaxed text-justify"
                                 >
-                                  {par}
+                                  {normalizedPar}
                                 </p>
                               </div>
                             );
