@@ -1768,7 +1768,7 @@ export default function App() {
                             </div>
                             <p
                               style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
-                              className="text-text-body font-serif leading-relaxed text-justify"
+                              className="text-text-body font-serif leading-relaxed text-left"
                             >
                               {normalizedPar}
                             </p>
@@ -1844,7 +1844,7 @@ export default function App() {
                                 </div>
                                 <p 
                                   style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
-                                  className="text-text-body font-serif leading-relaxed text-justify"
+                                  className="text-text-body font-serif leading-relaxed text-left"
                                 >
                                   {normalizedPar}
                                 </p>
