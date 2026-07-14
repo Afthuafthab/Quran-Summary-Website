@@ -97,15 +97,35 @@ const getApp = async () => {
     });
 
     app.get("/api/sanity/chapter", async (req, res) => {
-      const chapterNumber = String(req.query.chapterNumber || "").trim();
-      if (!chapterNumber) {
+      const chapterNumber = Number(String(req.query.chapterNumber || "").trim());
+      if (!Number.isFinite(chapterNumber) || chapterNumber < 1 || chapterNumber > 114) {
         return res.status(400).json({ status: "error", message: "chapterNumber is required" });
       }
 
       try {
         const chapter = await sanityClient.fetch(
-          `*[_type == "chapter" && chapterNumber == $chapterNumber][0]{_id, title, chapterNumber, content, body}`,
-          { chapterNumber: Number(chapterNumber) }
+          `*[
+            (_type == "bookSection" && sectionType == "surah" && coalesce(surahNumber, chapterNumber) == $chapterNumber)
+            ||
+            (_type == "chapter" && chapterNumber == $chapterNumber)
+          ]
+          | order(length(coalesce(content, body, "")) desc, _updatedAt desc)[0]{
+            _id,
+            _type,
+            title,
+            titleMal,
+            titleEng,
+            chapterNumber,
+            surahNumber,
+            versesCount,
+            revelation,
+            revelationMal,
+            summary,
+            content,
+            body,
+            _updatedAt
+          }`,
+          { chapterNumber }
         );
 
         if (!chapter) {
