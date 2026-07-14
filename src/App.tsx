@@ -26,7 +26,11 @@ import {
   Bookmark,
   BookmarkCheck,
   Bug,
-  Shield
+  Shield,
+  MessageCircle,
+  Mic,
+  Send,
+  Bot
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { allSurahs, SurahMeta } from "./data/all_surahs";
@@ -117,6 +121,22 @@ interface KeywordHit {
   verseKey: string;
   anchorId: string;
   lineText: string;
+}
+
+interface ChatReference {
+  surahId?: number;
+  verseKey?: string;
+  anchorId?: string;
+  snippet?: string;
+}
+
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  references?: ChatReference[];
+  escalateToAuthor?: boolean;
+  whatsappUrl?: string;
 }
 
 const volumes: Volume[] = [
@@ -229,6 +249,20 @@ export default function App() {
   const [adminStatusMessage, setAdminStatusMessage] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
 
+  // Chatbot state
+  const [showChatbot, setShowChatbot] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatListening, setChatListening] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "chat-welcome",
+      role: "assistant",
+      text: "അസ്സലാമു അലൈക്കും. ഖുർആൻ സംക്ഷിപ്ത അവലോകനവുമായി ബന്ധപ്പെട്ട ചോദ്യം മലയാളത്തിൽ ചോദിക്കാം. ഉത്തരം ലഭിക്കാതിരുന്നാൽ ഗ്രന്ഥകർത്താവിന്റെ WhatsApp-ലേക്ക് നേരിട്ട് അയക്കാൻ സഹായിക്കും.",
+    },
+  ]);
+  const chatRecognitionRef = useRef<any>(null);
+
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
@@ -305,6 +339,16 @@ export default function App() {
       .replace(/\s+\)/g, ")")
       .trim();
   };
+
+  useEffect(() => {
+    return () => {
+      try {
+        chatRecognitionRef.current?.stop?.();
+      } catch {
+        // no-op
+      }
+    };
+  }, []);
 
   const loadHardcopyStatus = async () => {
     try {
@@ -1297,6 +1341,154 @@ export default function App() {
     };
 
     setTimeout(scrollToAnchor, 150);
+  };
+
+  const handleChatReferenceClick = (ref: ChatReference) => {
+    if (!ref.surahId && !ref.verseKey) return;
+
+    const targetSection = ref.surahId
+      ? sequence.find((sec) => sec.type === "surah" && sec.surahId === ref.surahId)
+      : null;
+
+    if (!targetSection) return;
+
+    stopSpeaking();
+    setViewMode("reader");
+    setActiveSectionId(targetSection.id);
+
+    const targetAnchor = ref.anchorId || (ref.verseKey ? `verse-card-${ref.verseKey}` : "");
+
+    let tries = 0;
+    const maxTries = 20;
+    const scrollNow = () => {
+      const el = targetAnchor ? document.getElementById(targetAnchor) : null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (ref.anchorId) {
+          setHighlightedLineId(ref.anchorId);
+          setTimeout(() => setHighlightedLineId((prev) => (prev === ref.anchorId ? null : prev)), 2400);
+        }
+        if (ref.verseKey) {
+          setHighlightedVerseKey(ref.verseKey);
+        }
+        return;
+      }
+      tries += 1;
+      if (tries < maxTries) {
+        setTimeout(scrollNow, 130);
+      }
+    };
+
+    setTimeout(scrollNow, 180);
+  };
+
+  const handleStartChatVoice = () => {
+    const w = window as any;
+    const Recognition = w.SpeechRecognition || w.webkitSpeechRecognition;
+
+    if (!Recognition) {
+      alert("ഈ ബ്രൗസറിൽ voice input പിന്തുണയില്ല. ദയവായി text ആയി ചോദിക്കുക.");
+      return;
+    }
+
+    try {
+      chatRecognitionRef.current?.stop?.();
+    } catch {
+      // ignore
+    }
+
+    const rec = new Recognition();
+    rec.lang = "ml-IN";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => setChatListening(true);
+    rec.onerror = () => setChatListening(false);
+    rec.onend = () => setChatListening(false);
+    rec.onresult = (event: any) => {
+      const spoken = String(event?.results?.[0]?.[0]?.transcript || "").trim();
+      if (spoken) {
+        setChatInput((prev) => (prev ? `${prev} ${spoken}` : spoken));
+      }
+    };
+
+    chatRecognitionRef.current = rec;
+    rec.start();
+  };
+
+  const handleSendChatMessage = async () => {
+    const message = chatInput.trim();
+    if (!message || chatLoading) return;
+
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      text: message,
+    };
+
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          activeSectionId,
+          activeSectionTitle: activeSection.title,
+          activeSurahId: activeSection.surahId || null,
+        }),
+      });
+
+      const payload = await parseJsonSafe(response);
+      if (!response.ok || payload?.status !== "success") {
+        throw new Error(payload?.message || "Chatbot failed");
+      }
+
+      const assistantMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        text: String(payload.answer || "ക്ഷമിക്കണം, മറുപടി ലഭിച്ചില്ല."),
+        references: Array.isArray(payload.references) ? payload.references : [],
+        escalateToAuthor: Boolean(payload.escalateToAuthor),
+        whatsappUrl: String(payload.whatsappUrl || ""),
+      };
+
+      setChatMessages((prev) => [...prev, assistantMessage]);
+    } catch (error: any) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-error-${Date.now()}`,
+          role: "assistant",
+          text: error?.message || "Chatbot currently unavailable. Please try again.",
+          escalateToAuthor: true,
+          whatsappUrl: `https://wa.me/919961170582?text=${encodeURIComponent(`അസ്സലാമു അലൈക്കും. ഈ ചോദ്യത്തിന് ദയവായി സഹായിക്കൂ: ${message}`)}`,
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleChatInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSendChatMessage();
+    }
+  };
+
+  const handleAskAuthorOnWhatsApp = (message: ChatMessage) => {
+    const url = message.whatsappUrl?.trim();
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const fallback = `https://wa.me/919961170582?text=${encodeURIComponent("അസ്സലാമു അലൈക്കും. ഒരു സംശയം ചോദിക്കാനുണ്ട്.")}`;
+    window.open(fallback, "_blank", "noopener,noreferrer");
   };
 
   const scrollToLineAnchor = (anchorId: string) => {
@@ -2362,6 +2554,100 @@ export default function App() {
         </main>
 
         {viewMode === "reader" && renderNavigationButtons()}
+      </div>
+
+      {/* FLOATING MALAYALAM VOICE CHATBOT */}
+      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+        {showChatbot && (
+          <div className="w-[92vw] sm:w-[380px] max-h-[68vh] bg-bg-card border border-border-main rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="px-3 py-2.5 border-b border-border-main bg-bg-subcard flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-accent-main" />
+                <p className="text-xs font-bold text-text-title">Malayalam Voice Chatbot</p>
+              </div>
+              <button onClick={() => setShowChatbot(false)} className="p-1 rounded-full hover:bg-bg-card text-text-muted">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-bg-app/20">
+              {chatMessages.map((msg) => (
+                <div key={msg.id} className={`rounded-xl border p-2.5 space-y-1.5 ${msg.role === "user" ? "bg-accent-main/15 border-accent-main/30" : "bg-bg-card border-border-main"}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-accent-main">{msg.role === "user" ? "You" : "Assistant"}</span>
+                    {msg.role === "assistant" && (
+                      <button
+                        onClick={() => handleReadAloud(`chat-${msg.id}`, [msg.text])}
+                        className="text-[10px] px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard"
+                      >
+                        🔊 കേൾക്കുക
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[12px] text-text-body font-serif leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+
+                  {msg.references && msg.references.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {msg.references.slice(0, 4).map((ref, idx) => (
+                        <button
+                          key={`${msg.id}-ref-${idx}`}
+                          onClick={() => handleChatReferenceClick(ref)}
+                          className="text-[10px] px-2 py-1 rounded-full border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard"
+                        >
+                          {ref.surahId ? `സൂറത്ത് ${ref.surahId}` : "Reference"}{ref.verseKey ? ` • ${ref.verseKey}` : ""}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {msg.escalateToAuthor && (
+                    <button
+                      onClick={() => handleAskAuthorOnWhatsApp(msg)}
+                      className="mt-1 text-[11px] px-2.5 py-1.5 rounded-lg bg-accent-main text-black font-bold hover:bg-opacity-90"
+                    >
+                      WhatsApp-ൽ ഗ്രന്ഥകർത്താവിനോട് ചോദിക്കുക
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {chatLoading && <div className="text-[11px] text-text-muted font-serif animate-pulse">മറുപടി തയ്യാറാക്കുന്നു...</div>}
+            </div>
+
+            <div className="p-2.5 border-t border-border-main bg-bg-subcard flex items-center gap-1.5">
+              <button
+                onClick={handleStartChatVoice}
+                className={`p-2 rounded-lg border ${chatListening ? "border-accent-main bg-accent-main/20 text-accent-light" : "border-border-main bg-bg-card text-text-muted"}`}
+                title="Malayalam voice input"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatInputKeyDown}
+                placeholder={chatListening ? "കേൾക്കുന്നു..." : "ചോദ്യം ചോദിക്കൂ..."}
+                className="flex-1 px-3 py-2 rounded-lg border border-border-main bg-bg-card text-text-title text-sm outline-none focus:border-accent-main"
+              />
+              <button
+                onClick={handleSendChatMessage}
+                disabled={chatLoading || !chatInput.trim()}
+                className="p-2 rounded-lg bg-accent-main text-black disabled:opacity-50"
+                title="Send"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowChatbot((prev) => !prev)}
+          className="h-12 w-12 rounded-full bg-accent-main text-black shadow-lg flex items-center justify-center hover:bg-opacity-90"
+          title="Open Malayalam chatbot"
+        >
+          <MessageCircle className="w-5 h-5" />
+        </button>
       </div>
 
       {/* AUTHOR DETAILS MODAL (Verbatim Metadata Contact) */}

@@ -27,6 +27,7 @@ const ai = new GoogleGenAI({
 
 // Load Quran Data
 import { quranData } from "./src/data/pmd_converted_content.ts";
+import { volume2Data } from "./src/data/volume2.ts";
 import { allSurahs } from "./src/data/all_surahs.ts";
 
 const sanityClient = createClient({
@@ -35,6 +36,54 @@ const sanityClient = createClient({
   apiVersion: process.env.VITE_SANITY_API_VERSION || "2025-07-01",
   useCdn: false,
 });
+
+const allQuranData: Record<string, any> = { ...quranData, ...volume2Data };
+const AUTHOR_WHATSAPP = "919961170582";
+
+const isBookTopicQuery = (text: string) => {
+  const q = text.toLowerCase();
+  return /(സൂറത്ത്|സൂരത്ത്|അധ്യായം|വചനം|ഖുർആൻ|quran|surah|verse|tafsir|തഫ്സീർ|പ്രവാച|allah|islam)/i.test(q);
+};
+
+const tokenizeQuery = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s:.-]/gu, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2)
+    .slice(0, 8);
+
+const getChatReferences = (query: string) => {
+  const tokens = tokenizeQuery(query);
+  const refs: Array<{ surahId?: number; verseKey: string; anchorId: string; snippet: string; score: number }> = [];
+
+  if (!tokens.length) return refs;
+
+  for (const [key, verse] of Object.entries(allQuranData)) {
+    const textLines = Array.isArray((verse as any)?.text) ? (verse as any).text : [];
+    textLines.forEach((line: string, idx: number) => {
+      const normalized = String(line || "").trim();
+      if (!normalized) return;
+      const lower = normalized.toLowerCase();
+      const score = tokens.reduce((acc, token) => (lower.includes(token) ? acc + 1 : acc), 0);
+      if (score <= 0) return;
+
+      const [surahRaw] = key.split(":");
+      const surahId = Number(surahRaw);
+      refs.push({
+        surahId: Number.isFinite(surahId) ? surahId : undefined,
+        verseKey: key,
+        anchorId: `line-verse-${key}-${idx}`,
+        snippet: normalized.slice(0, 220),
+        score,
+      });
+    });
+  }
+
+  refs.sort((a, b) => b.score - a.score);
+  return refs.slice(0, 6);
+};
 
 async function startServer(options: { serveFrontend?: boolean } = {}) {
   const serveFrontend = options.serveFrontend ?? true;
@@ -389,6 +438,63 @@ async function startServer(options: { serveFrontend?: boolean } = {}) {
       console.error("Failed to fetch Sanity chapter:", error);
       res.status(500).json({ status: "error", message: "Failed to fetch Sanity chapter" });
     }
+  });
+
+  app.post("/api/chat", async (req, res) => {
+    const message = String(req.body?.message || "").trim();
+    const activeSectionTitle = String(req.body?.activeSectionTitle || "").trim();
+    const activeSurahId = Number(req.body?.activeSurahId || 0);
+
+    if (!message || message.length < 2) {
+      return res.status(400).json({ status: "error", message: "Message is required" });
+    }
+
+    const references = getChatReferences(message);
+    const relatedToBook = isBookTopicQuery(message) || Boolean(activeSectionTitle) || Number.isFinite(activeSurahId);
+    const canAnswer = references.length > 0 && references[0].score >= 1;
+    const escalateToAuthor = relatedToBook && !canAnswer;
+
+    const contextLabel = activeSectionTitle
+      ? `നിലവിലെ അധ്യായം: ${activeSectionTitle}${Number.isFinite(activeSurahId) && activeSurahId > 0 ? ` (സൂറത്ത് ${activeSurahId})` : ""}`
+      : "";
+
+    const draftQuestionForAuthor = [
+      "അസ്സലാമു അലൈക്കും.",
+      "ഈ ചോദ്യത്തിന് വിശദീകരണം വേണം:",
+      message,
+      contextLabel,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const whatsappUrl = `https://wa.me/${AUTHOR_WHATSAPP}?text=${encodeURIComponent(draftQuestionForAuthor)}`;
+
+    if (!canAnswer) {
+      return res.json({
+        status: "success",
+        canAnswer: false,
+        escalateToAuthor,
+        answer: escalateToAuthor
+          ? "ഈ ചോദ്യത്തിന് കൃത്യമായ മറുപടി ഇപ്പോൾ ലഭ്യമല്ല. ഗ്രന്ഥകർത്താവിനോട് നേരിട്ട് ചോദിക്കാം."
+          : "ഖുർആൻ സംക്ഷിപ്ത അവലോകനവുമായി ബന്ധപ്പെട്ട ചോദ്യങ്ങൾ ചോദിക്കൂ. ഞാൻ ബന്ധപ്പെട്ട വചനങ്ങൾ കണ്ടെത്തി സഹായിക്കും.",
+        references: [],
+        whatsappUrl,
+        draftQuestionForAuthor,
+      });
+    }
+
+    const topRefs = references.slice(0, 3);
+    const answerLines = topRefs.map((ref, idx) => `${idx + 1}) സൂറത്ത് ${ref.surahId || "?"} • ${ref.verseKey}\n${ref.snippet}`);
+
+    return res.json({
+      status: "success",
+      canAnswer: true,
+      escalateToAuthor: false,
+      answer: `താങ്കളുടെ ചോദ്യവുമായി ബന്ധപ്പെട്ട ഭാഗങ്ങൾ കണ്ടെത്തി:\n\n${answerLines.join("\n\n")}`,
+      references: topRefs,
+      whatsappUrl,
+      draftQuestionForAuthor,
+    });
   });
 
   // API to retrieve list of available verses in the database (with optimized lazy-loading filtering)
