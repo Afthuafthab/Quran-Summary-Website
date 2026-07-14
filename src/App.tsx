@@ -1084,18 +1084,61 @@ export default function App() {
       sequence.currentAudio = null;
     };
 
-    const playWordAudio = (wordText: string): Promise<void> => {
+    const chunkSize = 8;
+    const chunks: Array<{ start: number; end: number; text: string }> = [];
+    for (let i = 0; i < words.length; i += chunkSize) {
+      const slice = words.slice(i, i + chunkSize);
+      chunks.push({
+        start: i,
+        end: i + slice.length - 1,
+        text: slice.map((w) => w.text).join(" "),
+      });
+    }
+
+    const playChunkAudio = (chunk: { start: number; end: number; text: string }): Promise<void> => {
       return new Promise((resolve, reject) => {
         if (sequence.cancelled) return resolve();
 
-        const audio = new Audio(`/api/tts?text=${encodeURIComponent(wordText)}`);
+        const audio = new Audio(`/api/tts?text=${encodeURIComponent(chunk.text)}`);
         audio.preload = "auto";
         audio.playbackRate = playbackRate;
         sequence.currentAudio = audio;
         audioRef.current = audio;
 
-        audio.onended = () => resolve();
-        audio.onerror = () => reject(new Error("Word audio failed"));
+        let lastGlobalWord = -1;
+        const updateByProgress = () => {
+          const duration = Number(audio.duration || 0);
+          if (!Number.isFinite(duration) || duration <= 0) return;
+
+          const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
+          const localCount = chunk.end - chunk.start + 1;
+          const localIndex = Math.min(localCount - 1, Math.floor(progress * localCount));
+          const globalIndex = chunk.start + localIndex;
+          if (globalIndex === lastGlobalWord) return;
+
+          lastGlobalWord = globalIndex;
+          const word = words[globalIndex];
+          if (word) {
+            setSpokenWordCursor({ key, lineIndex: word.lineIndex, wordIndex: word.wordIndex });
+          }
+        };
+
+        audio.onplay = () => {
+          const first = words[chunk.start];
+          if (first) {
+            setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
+          }
+        };
+
+        audio.ontimeupdate = updateByProgress;
+        audio.onended = () => {
+          const last = words[chunk.end];
+          if (last) {
+            setSpokenWordCursor({ key, lineIndex: last.lineIndex, wordIndex: last.wordIndex });
+          }
+          resolve();
+        };
+        audio.onerror = () => reject(new Error("Chunk audio failed"));
 
         audio.play().catch(reject);
       });
@@ -1103,14 +1146,12 @@ export default function App() {
 
     const run = async () => {
       try {
-        for (let i = 0; i < words.length; i += 1) {
+        for (const chunk of chunks) {
           if (sequence.cancelled) break;
-          const w = words[i];
-          setSpokenWordCursor({ key, lineIndex: w.lineIndex, wordIndex: w.wordIndex });
-          await playWordAudio(w.text);
+          await playChunkAudio(chunk);
         }
       } catch (error) {
-        console.warn("Strict synced TTS sequence failed:", error);
+        console.warn("Synced chunk TTS failed:", error);
       } finally {
         cleanup();
       }
