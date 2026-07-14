@@ -2,8 +2,6 @@ import express from "express";
 import path from "path";
 import { promises as fs } from "fs";
 import { createClient } from "@sanity/client";
-import { quranData } from "../src/data/pmd_converted_content.ts";
-import { volume2Data } from "../src/data/volume2.ts";
 
 const sanityClient = createClient({
   projectId: process.env.VITE_SANITY_PROJECT_ID || "lgqos9pf",
@@ -48,7 +46,6 @@ type BetaReport = {
   updatedAt: string;
 };
 
-const allQuranData: Record<string, any> = { ...quranData, ...volume2Data };
 const AUTHOR_WHATSAPP = "919961170582";
 
 const isBookTopicQuery = (text: string) => {
@@ -63,37 +60,57 @@ const tokenizeQuery = (text: string) =>
     .split(/\s+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 2)
-    .slice(0, 8);
+    .slice(0, 4);
 
-const getChatReferences = (query: string) => {
+const getChatReferences = async (query: string) => {
   const tokens = tokenizeQuery(query);
+  if (!tokens.length) return [] as Array<{ surahId?: number; verseKey: string; anchorId: string; snippet: string; score: number }>;
+
   const refs: Array<{ surahId?: number; verseKey: string; anchorId: string; snippet: string; score: number }> = [];
 
-  if (!tokens.length) return refs;
+  for (const token of tokens) {
+    const pattern = `*${token}*`;
+    const docs = await sanityClient.fetch(
+      `*[_type == "bookSection" && sectionType == "surah" && (content match $pattern || body match $pattern)][0...6]{
+        chapterNumber,
+        surahNumber,
+        content,
+        body
+      }`,
+      { pattern }
+    );
 
-  for (const [key, verse] of Object.entries(allQuranData)) {
-    const textLines = Array.isArray((verse as any)?.text) ? (verse as any).text : [];
-    textLines.forEach((line: string, idx: number) => {
-      const normalized = String(line || "").trim();
-      if (!normalized) return;
-      const lower = normalized.toLowerCase();
-      const score = tokens.reduce((acc, token) => (lower.includes(token) ? acc + 1 : acc), 0);
-      if (score <= 0) return;
+    for (const doc of docs || []) {
+      const surahId = Number(doc?.surahNumber ?? doc?.chapterNumber);
+      const raw = String(doc?.content || doc?.body || "");
+      if (!raw) continue;
 
-      const [surahRaw] = key.split(":");
-      const surahId = Number(surahRaw);
+      const lines = raw.split(/\r?\n/).map((x: string) => x.trim()).filter(Boolean);
+      const lineIndex = lines.findIndex((line: string) => line.toLowerCase().includes(token));
+      if (lineIndex < 0) continue;
+
+      const line = lines[lineIndex];
+      const verseMatch = line.match(/^(\d+)(?:\s*[.:-]|\))/);
+      const verseNo = verseMatch ? Number(verseMatch[1]) : lineIndex + 1;
+      const verseKey = Number.isFinite(surahId) && surahId > 0 ? `${surahId}:${verseNo}` : `0:${verseNo}`;
+
       refs.push({
         surahId: Number.isFinite(surahId) ? surahId : undefined,
-        verseKey: key,
-        anchorId: `line-verse-${key}-${idx}`,
-        snippet: normalized.slice(0, 220),
-        score,
+        verseKey,
+        anchorId: `line-verse-${verseKey}-0`,
+        snippet: line.slice(0, 220),
+        score: 1,
       });
-    });
+    }
   }
 
-  refs.sort((a, b) => b.score - a.score);
-  return refs.slice(0, 6);
+  const unique = new Map<string, { surahId?: number; verseKey: string; anchorId: string; snippet: string; score: number }>();
+  refs.forEach((ref) => {
+    const key = `${ref.surahId || 0}:${ref.verseKey}`;
+    if (!unique.has(key)) unique.set(key, ref);
+  });
+
+  return Array.from(unique.values()).slice(0, 6);
 };
 
 const ensureStore = async <T>(filePath: string, fallback: T) => {
@@ -198,7 +215,7 @@ const getApp = async () => {
         return res.status(400).json({ status: "error", message: "Message is required" });
       }
 
-      const references = getChatReferences(message);
+      const references = await getChatReferences(message);
       const relatedToBook = isBookTopicQuery(message) || Boolean(activeSectionTitle) || Number.isFinite(activeSurahId);
       const canAnswer = references.length > 0 && references[0].score >= 1;
       const escalateToAuthor = relatedToBook && !canAnswer;
