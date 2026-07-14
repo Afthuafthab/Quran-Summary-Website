@@ -294,7 +294,7 @@ export default function App() {
     }
   });
   const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
-  const [spokenWordCursor, setSpokenWordCursor] = useState<{ key: string; lineIndex: number; wordIndex: number } | null>(null);
+  const [readingLineAnchorId, setReadingLineAnchorId] = useState<string | null>(null);
 
   // Highlighted search item scroll reference
   const [highlightedVerseKey, setHighlightedVerseKey] = useState<string | null>(null);
@@ -1016,6 +1016,36 @@ export default function App() {
     return parts.filter((line, index) => !isLikelyHeadingLine(line, index));
   }, [sanityChapterContent, activeSection]);
 
+  const currentReadAloudPayload = useMemo(() => {
+    if (activeSection.type === "surah" && sanityChapterParagraphs.length > 0) {
+      return {
+        key: `sanity_chapter_${activeSection.surahId}`,
+        lines: sanityChapterParagraphs,
+        anchors: sanityChapterParagraphs.map((_, idx) => `line-sanity-${activeSection.id}-${idx}`),
+      };
+    }
+
+    const lines: string[] = [];
+    const anchors: string[] = [];
+    currentVerses.forEach(([verseKey, verse]) => {
+      verse.text.forEach((line, idx) => {
+        lines.push(normalizeMalayalamSpacing(line));
+        anchors.push(`line-verse-${verseKey}-${idx}`);
+      });
+    });
+
+    return {
+      key: `section_${activeSection.id}`,
+      lines,
+      anchors,
+    };
+  }, [activeSection, sanityChapterParagraphs, currentVerses]);
+
+  const handleReadCurrentSection = () => {
+    if (!currentReadAloudPayload.lines.length) return;
+    handleReadAloud(currentReadAloudPayload.key, currentReadAloudPayload.lines, currentReadAloudPayload.anchors);
+  };
+
   const renderPlaybackSpeedControl = () => (
     <label className="inline-flex items-center gap-1 text-[10px] font-bold text-text-muted">
       <span>Speed</span>
@@ -1044,8 +1074,8 @@ export default function App() {
     </label>
   );
 
-  // Read Aloud handler (strict sync: one spoken word ↔ one highlighted word)
-  const handleReadAloud = (key: string, textArray: string[]) => {
+  // Read Aloud handler (stable line-tracking)
+  const handleReadAloud = (key: string, textArray: string[], lineAnchors?: string[]) => {
     if (isSpeaking && speakingKey === key) {
       stopSpeaking();
       return;
@@ -1056,22 +1086,9 @@ export default function App() {
     const normalizedLines = textArray.map(normalizeMalayalamSpacing).filter(Boolean);
     if (!normalizedLines.length) return;
 
-    const words: Array<{ lineIndex: number; wordIndex: number; text: string }> = [];
-    normalizedLines.forEach((line, lineIndex) => {
-      line
-        .split(/\s+/)
-        .map((w) => w.trim())
-        .filter(Boolean)
-        .forEach((token, wordIndex) => {
-          words.push({ lineIndex, wordIndex, text: token });
-        });
-    });
-
-    if (!words.length) return;
-
     setIsSpeaking(true);
     setSpeakingKey(key);
-    setSpokenWordCursor(null);
+    setReadingLineAnchorId(null);
 
     const sequence = ttsSequenceRef.current;
     sequence.cancelled = false;
@@ -1080,53 +1097,42 @@ export default function App() {
     const cleanup = () => {
       setIsSpeaking(false);
       setSpeakingKey(null);
-      setSpokenWordCursor(null);
+      setReadingLineAnchorId(null);
       sequence.currentAudio = null;
     };
 
-    // One continuous Malayalam TTS stream for natural voice flow.
-    // Keep only words that fit request budget so highlight always matches played audio.
-    const maxTtsChars = 1800;
-    const spokenWords: Array<{ lineIndex: number; wordIndex: number; text: string }> = [];
-    let charBudget = 0;
-    for (const w of words) {
-      const next = w.text.length + (spokenWords.length > 0 ? 1 : 0);
-      if (charBudget + next > maxTtsChars) break;
-      spokenWords.push(w);
-      charBudget += next;
-    }
-
-    if (!spokenWords.length) {
-      cleanup();
-      return;
-    }
-
-    const spokenText = spokenWords.map((w) => w.text).join(" ");
-    const audio = new Audio(`/api/tts?text=${encodeURIComponent(spokenText)}`);
+    const fullText = normalizedLines.join(" ").slice(0, 1800);
+    const audio = new Audio(`/api/tts?text=${encodeURIComponent(fullText)}`);
     audio.preload = "auto";
     audio.playbackRate = playbackRate;
     sequence.currentAudio = audio;
     audioRef.current = audio;
 
-    let lastWordIdx = -1;
+    const effectiveAnchors =
+      Array.isArray(lineAnchors) && lineAnchors.length === normalizedLines.length
+        ? lineAnchors
+        : normalizedLines.map((_, idx) => `${key}-line-${idx}`);
+
+    let lastLineIdx = -1;
     let rafId: number | null = null;
 
-    const updateByProgress = () => {
+    const updateLineByProgress = () => {
       const duration = Number(audio.duration || 0);
       if (!Number.isFinite(duration) || duration <= 0) return;
 
-      const total = spokenWords.length;
-      const avgWordSec = duration / Math.max(total, 1);
-      const lookAheadSec = Math.min(0.14, Math.max(0.04, avgWordSec * 0.3));
-      const effectiveTime = Math.min(duration, audio.currentTime + lookAheadSec);
-
-      const progress = Math.max(0, Math.min(1, effectiveTime / duration));
+      const total = normalizedLines.length;
+      const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
       const idx = Math.min(total - 1, Math.floor(progress * total));
-      if (idx === lastWordIdx) return;
+      if (idx === lastLineIdx) return;
 
-      lastWordIdx = idx;
-      const word = spokenWords[idx];
-      setSpokenWordCursor({ key, lineIndex: word.lineIndex, wordIndex: word.wordIndex });
+      lastLineIdx = idx;
+      const anchorId = effectiveAnchors[idx];
+      setReadingLineAnchorId(anchorId);
+
+      const el = document.getElementById(anchorId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     };
 
     const stopRaf = () => {
@@ -1137,39 +1143,33 @@ export default function App() {
     };
 
     const rafSync = () => {
-      updateByProgress();
+      updateLineByProgress();
       if (!audio.paused && !audio.ended && !sequence.cancelled) {
         rafId = window.requestAnimationFrame(rafSync);
       }
     };
 
     audio.onplay = () => {
-      const first = spokenWords[0];
-      if (first) {
-        setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
-      }
+      setReadingLineAnchorId(effectiveAnchors[0] || null);
       stopRaf();
       rafId = window.requestAnimationFrame(rafSync);
     };
 
-    audio.ontimeupdate = updateByProgress;
+    audio.ontimeupdate = updateLineByProgress;
     audio.onpause = () => stopRaf();
     audio.onended = () => {
       stopRaf();
-      const last = spokenWords[spokenWords.length - 1];
-      if (last) {
-        setSpokenWordCursor({ key, lineIndex: last.lineIndex, wordIndex: last.wordIndex });
-      }
+      setReadingLineAnchorId(effectiveAnchors[effectiveAnchors.length - 1] || null);
       cleanup();
     };
     audio.onerror = () => {
-      console.warn("Synced TTS audio failed");
+      console.warn("TTS audio failed");
       stopRaf();
       cleanup();
     };
 
     audio.play().catch((error) => {
-      console.warn("Synced TTS play failed:", error);
+      console.warn("TTS play failed:", error);
       stopRaf();
       cleanup();
     });
@@ -1203,7 +1203,7 @@ export default function App() {
 
     setIsSpeaking(false);
     setSpeakingKey(null);
-    setSpokenWordCursor(null);
+    setReadingLineAnchorId(null);
   };
 
   // Local exact search of manuscript text
@@ -1304,50 +1304,21 @@ export default function App() {
 
   const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const renderHighlightedKeywordText = (text: string, lineKey?: string, lineIndex?: number) => {
+  const renderHighlightedKeywordText = (text: string) => {
     const normalizedText = normalizeMalayalamSpacing(text);
-    const parts = normalizedText.split(/(\s+)/);
-    let localWordIndex = 0;
+    if (!highlightedKeyword?.trim()) return normalizedText;
 
-    return parts.map((part, idx) => {
-      if (!part) return null;
-      if (/^\s+$/.test(part)) {
-        return <React.Fragment key={`space-${idx}`}>{part}</React.Fragment>;
-      }
-
-      const isKeywordMatch = Boolean(highlightedKeyword?.trim())
-        && part.toLowerCase().includes((highlightedKeyword || "").toLowerCase());
-
-      const isSpokenWord = Boolean(
-        spokenWordCursor
-        && lineKey
-        && typeof lineIndex === "number"
-        && spokenWordCursor.key === lineKey
-        && spokenWordCursor.lineIndex === lineIndex
-        && spokenWordCursor.wordIndex === localWordIndex
-      );
-
-      const key = `tok-${lineKey || "na"}-${lineIndex ?? -1}-${idx}`;
-      localWordIndex += 1;
-
-      if (isSpokenWord) {
-        return (
-          <mark key={key} className="bg-amber-400/45 text-text-title px-0.5 rounded-sm ring-1 ring-amber-300/70">
-            {part}
-          </mark>
-        );
-      }
-
-      if (isKeywordMatch) {
-        return (
-          <mark key={key} className="bg-accent-main/25 text-accent-light px-0.5 rounded-sm">
-            {part}
-          </mark>
-        );
-      }
-
-      return <React.Fragment key={key}>{part}</React.Fragment>;
-    });
+    const matcher = new RegExp(`(${escapeRegExp(highlightedKeyword)})`, "gi");
+    const parts = normalizedText.split(matcher);
+    return parts.map((part, idx) =>
+      part.toLowerCase() === highlightedKeyword.toLowerCase() ? (
+        <mark key={`${part}-${idx}`} className="bg-accent-main/25 text-accent-light px-0.5 rounded-sm">
+          {part}
+        </mark>
+      ) : (
+        <React.Fragment key={`${part}-${idx}`}>{part}</React.Fragment>
+      )
+    );
   };
 
   // Navigate to a specific section and scroll to verse key
@@ -1637,6 +1608,17 @@ export default function App() {
             <Plus className="w-3.5 h-3.5" />
           </button>
           <button
+            onClick={handleReadCurrentSection}
+            className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
+              isSpeaking && speakingKey === currentReadAloudPayload.key
+                ? "border-accent-main bg-accent-main/20 text-accent-light"
+                : "border-border-main bg-bg-subcard text-text-title hover:bg-bg-card"
+            }`}
+            title={isSpeaking && speakingKey === currentReadAloudPayload.key ? "വായന നിർത്തുക" : "ഈ വിഭാഗം വായിച്ചു കേൾപ്പിക്കുക"}
+          >
+            {isSpeaking && speakingKey === currentReadAloudPayload.key ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+          </button>
+          <button
             onClick={() => setTheme(prev => prev === "midnight" ? "white" : "midnight")}
             className="w-8 h-8 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
             title="പശ്ചാത്തലം മാറ്റുക"
@@ -1668,7 +1650,7 @@ export default function App() {
 
       {/* Mobile: bottom dock with comfort controls + nav */}
       <div className="md:hidden fixed bottom-3 left-3 right-3 z-30 rounded-2xl border border-border-main bg-bg-card/95 backdrop-blur-sm p-2 shadow-lg space-y-2">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           <button
             onClick={() => setFontDelta(prev => Math.max(-4, prev - 2))}
             className="h-9 rounded-lg border border-border-main bg-bg-subcard text-text-title hover:bg-bg-card flex items-center justify-center transition-all cursor-pointer"
@@ -1685,6 +1667,17 @@ export default function App() {
             title="വലുപ്പം കൂട്ടുക (A+)"
           >
             <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={handleReadCurrentSection}
+            className={`h-9 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
+              isSpeaking && speakingKey === currentReadAloudPayload.key
+                ? "border-accent-main bg-accent-main/20 text-accent-light"
+                : "border-border-main bg-bg-subcard text-text-title hover:bg-bg-card"
+            }`}
+            title={isSpeaking && speakingKey === currentReadAloudPayload.key ? "വായന നിർത്തുക" : "ഈ വിഭാഗം വായിച്ചു കേൾപ്പിക്കുക"}
+          >
+            {isSpeaking && speakingKey === currentReadAloudPayload.key ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
           <button
             onClick={() => setTheme(prev => prev === "midnight" ? "white" : "midnight")}
@@ -1769,7 +1762,7 @@ export default function App() {
             <span className="hidden sm:inline">ഡാഷ്ബോർഡ്</span>
           </button>
 
-          {/* Font Size Adjusters */}
+          {/* Font Size Adjusters + Quick Read */}
           <div className="hidden sm:flex items-center border border-border-main rounded-xl bg-bg-subcard p-1">
             <button 
               onClick={() => setFontDelta(prev => Math.max(-4, prev - 2))}
@@ -1785,6 +1778,17 @@ export default function App() {
               title="വലുപ്പം കൂട്ടുക (A+)"
             >
               <Plus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleReadCurrentSection}
+              className={`p-1 rounded-lg transition-all ${
+                isSpeaking && speakingKey === currentReadAloudPayload.key
+                  ? "bg-accent-main/20 text-accent-light"
+                  : "hover:bg-bg-card text-text-title"
+              }`}
+              title={isSpeaking && speakingKey === currentReadAloudPayload.key ? "വായന നിർത്തുക" : "ഈ വിഭാഗം വായിച്ചു കേൾപ്പിക്കുക"}
+            >
+              {isSpeaking && speakingKey === currentReadAloudPayload.key ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             </button>
           </div>
 
@@ -2456,7 +2460,11 @@ export default function App() {
                       <div className="flex items-center gap-2">
                         {renderPlaybackSpeedControl()}
                         <button
-                          onClick={() => handleReadAloud(`sanity_chapter_${activeSection.surahId}`, sanityChapterParagraphs)}
+                          onClick={() => handleReadAloud(
+                            `sanity_chapter_${activeSection.surahId}`,
+                            sanityChapterParagraphs,
+                            sanityChapterParagraphs.map((_, idx) => `line-sanity-${activeSection.id}-${idx}`)
+                          )}
                           className={`p-2 rounded-xl border transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer ${
                             isSpeaking && speakingKey === `sanity_chapter_${activeSection.surahId}`
                               ? "bg-accent-main/20 border-accent-main text-accent-light"
@@ -2475,8 +2483,9 @@ export default function App() {
                         const normalizedPar = normalizeMalayalamSpacing(par);
                         const anchorId = `line-sanity-${activeSection.id}-${index}`;
                         const isLineHighlighted = highlightedLineId === anchorId;
+                        const isReadingLine = readingLineAnchorId === anchorId;
                         return (
-                          <div key={`sanity-${index}`} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
+                          <div key={`sanity-${index}`} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""} ${isReadingLine ? "ring-2 ring-amber-400/70 bg-amber-300/10" : ""}`}>
                             <div className="flex justify-end gap-1.5 pb-1">
                               <button
                                 onClick={() => handleSaveLineBookmark(anchorId, normalizedPar)}
@@ -2505,7 +2514,7 @@ export default function App() {
                               style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                               className="text-text-body font-serif leading-relaxed text-left"
                             >
-                              {renderHighlightedKeywordText(normalizedPar, `sanity_chapter_${activeSection.surahId}`, index)}
+                              {renderHighlightedKeywordText(normalizedPar)}
                             </p>
                           </div>
                         );
@@ -2531,7 +2540,11 @@ export default function App() {
                             {renderPlaybackSpeedControl()}
                             {/* Verbatim Audio Reader button */}
                             <button
-                              onClick={() => handleReadAloud(key, verse.text)}
+                              onClick={() => handleReadAloud(
+                                key,
+                                verse.text,
+                                verse.text.map((_, idx) => `line-verse-${key}-${idx}`)
+                              )}
                               className={`p-2 rounded-xl border transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer ${
                                 isVerseSpeaking
                                   ? "bg-accent-main/20 border-accent-main text-accent-light"
@@ -2551,8 +2564,9 @@ export default function App() {
                             const normalizedPar = normalizeMalayalamSpacing(par);
                             const anchorId = `line-verse-${key}-${index}`;
                             const isLineHighlighted = highlightedLineId === anchorId;
+                            const isReadingLine = readingLineAnchorId === anchorId;
                             return (
-                              <div key={index} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""}`}>
+                              <div key={index} id={anchorId} className={`rounded-xl px-1.5 transition-all ${isLineHighlighted ? "ring-2 ring-accent-main/60 bg-accent-main/10" : ""} ${isReadingLine ? "ring-2 ring-amber-400/70 bg-amber-300/10" : ""}`}>
                                 <div className="flex justify-end gap-1.5 pb-1">
                                   <button
                                     onClick={() => handleSaveLineBookmark(anchorId, normalizedPar)}
@@ -2581,7 +2595,7 @@ export default function App() {
                                   style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                                   className="text-text-body font-serif leading-relaxed text-left"
                                 >
-                                  {renderHighlightedKeywordText(normalizedPar, key, index)}
+                                  {renderHighlightedKeywordText(normalizedPar)}
                                 </p>
                               </div>
                             );
