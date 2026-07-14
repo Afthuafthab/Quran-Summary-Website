@@ -1188,6 +1188,10 @@ export default function App() {
         utterance.rate = playbackRate;
         utterance.pitch = 1;
 
+        utterance.onstart = () => {
+          updateSpokenWordByChar(activeChunk.start);
+        };
+
         utterance.onboundary = (event: SpeechSynthesisEvent) => {
           const localChar = Number(event.charIndex || 0);
           updateSpokenWordByChar(activeChunk.start + localChar);
@@ -1214,8 +1218,6 @@ export default function App() {
         synth.speak(utterance);
       };
 
-      // highlight first word immediately
-      updateSpokenWordByChar(0);
       speakNext();
       return true;
     };
@@ -1240,30 +1242,63 @@ export default function App() {
     audio.playbackRate = playbackRate;
     audioRef.current = audio;
 
-    // Approximate progressive word highlight for remote TTS fallback
-    let timer: number | null = null;
-    if (wordPointers.length > 0) {
-      let pointerIdx = 0;
-      setSpokenWordCursor({ key, lineIndex: wordPointers[0].lineIndex, wordIndex: wordPointers[0].wordIndex });
-      const stepMs = Math.max(90, Math.floor((280 / Math.max(playbackRate, 0.7))));
-      timer = window.setInterval(() => {
-        pointerIdx += 1;
-        if (pointerIdx >= wordPointers.length) return;
-        const p = wordPointers[pointerIdx];
+    // Progress-based highlighting synced with actual audio time (fallback /api/tts)
+    let rafId: number | null = null;
+    let lastWordIdx = -1;
+
+    const stopRafSync = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const syncWordFromAudioTime = () => {
+      if (!wordPointers.length) return;
+      const duration = Number(audio.duration || 0);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        rafId = window.requestAnimationFrame(syncWordFromAudioTime);
+        return;
+      }
+
+      const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
+      const nextIdx = Math.min(wordPointers.length - 1, Math.floor(progress * wordPointers.length));
+
+      if (nextIdx !== lastWordIdx) {
+        lastWordIdx = nextIdx;
+        const p = wordPointers[nextIdx];
         setSpokenWordCursor({ key, lineIndex: p.lineIndex, wordIndex: p.wordIndex });
-      }, stepMs);
-    }
+      }
+
+      if (!audio.paused && !audio.ended) {
+        rafId = window.requestAnimationFrame(syncWordFromAudioTime);
+      }
+    };
+
+    audio.onplay = () => {
+      if (wordPointers.length > 0) {
+        lastWordIdx = 0;
+        const first = wordPointers[0];
+        setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
+      }
+      stopRafSync();
+      rafId = window.requestAnimationFrame(syncWordFromAudioTime);
+    };
+
+    audio.onpause = () => {
+      stopRafSync();
+    };
 
     audio.play().catch(err => {
       console.warn("Audio playback failed:", err);
-      if (timer) window.clearInterval(timer);
+      stopRafSync();
       setIsSpeaking(false);
       setSpeakingKey(null);
       setSpokenWordCursor(null);
     });
 
     audio.onended = () => {
-      if (timer) window.clearInterval(timer);
+      stopRafSync();
       setIsSpeaking(false);
       setSpeakingKey(null);
       setSpokenWordCursor(null);
