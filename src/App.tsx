@@ -1824,6 +1824,66 @@ export default function App() {
                 </div>
               </div>
 
+              {/* DASHBOARD KEY TERMS */}
+              <div className="bg-bg-card border border-border-main rounded-2xl p-4 sm:p-5 space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-text-title font-serif">പ്രധാന പദങ്ങൾ (Key Terms)</h3>
+                  {selectedKeyword && (
+                    <button
+                      onClick={() => {
+                        setSelectedKeyword(null);
+                        setHighlightedKeyword(null);
+                      }}
+                      className="text-[10px] px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
+                    >
+                      Clear keyword
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {keywordHitCounts.slice(0, 20).map(({ term, count }) => (
+                    <button
+                      key={`dash-${term}`}
+                      onClick={() => {
+                        setSelectedKeyword(term);
+                        setHighlightedKeyword(term);
+                      }}
+                      className={`px-2.5 py-1 rounded-full text-[10px] border transition-all cursor-pointer ${
+                        selectedKeyword === term
+                          ? "bg-accent-main/20 border-accent-main/50 text-accent-light"
+                          : "bg-bg-subcard border-border-main text-text-muted hover:text-text-title hover:bg-bg-card"
+                      }`}
+                      title={`${count} matches`}
+                    >
+                      {term} ({count})
+                    </button>
+                  ))}
+                </div>
+
+                {selectedKeyword && (
+                  <div className="rounded-xl border border-border-main bg-bg-subcard/40 p-2 max-h-56 overflow-y-auto space-y-1">
+                    <p className="text-[10px] text-text-muted font-bold px-1">"{selectedKeyword}" — {selectedKeywordHits.length} കണ്ടെത്തി</p>
+                    {selectedKeywordHits.length === 0 ? (
+                      <p className="text-[11px] text-text-submuted px-1">ഈ പദത്തിന് ഫലങ്ങൾ നിലവിൽ ലഭ്യമല്ല.</p>
+                    ) : (
+                      selectedKeywordHits.slice(0, 20).map((hit, idx) => (
+                        <button
+                          key={`dash-hit-${hit.verseKey}-${hit.anchorId}-${idx}`}
+                          onClick={() => handleKeywordHitClick(hit)}
+                          className="w-full text-left p-2 rounded-lg border border-border-main bg-bg-card hover:bg-bg-subcard transition-all cursor-pointer"
+                        >
+                          <p className="text-[10px] font-bold text-accent-main">
+                            {hit.surahId ? `സൂറത്ത് ${hit.surahId}` : "ആമുഖം"} • {hit.verseKey}
+                          </p>
+                          <p className="text-[11px] text-text-title font-serif leading-relaxed line-clamp-2">{hit.lineText}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* CHOOSE VIEW: VOLUME GRID OR SPECIFIC VOLUME CHAPTERS LIST */}
               {selectedVolumeId === null ? (
                 <div className="space-y-6">
