@@ -109,6 +109,16 @@ interface BetaReportItem extends BetaReportDraft {
   updatedAt: string;
 }
 
+interface KeywordHit {
+  term: string;
+  sectionId: string;
+  sectionTitle: string;
+  surahId?: number;
+  verseKey: string;
+  anchorId: string;
+  lineText: string;
+}
+
 const volumes: Volume[] = [
   {
     id: 1,
@@ -221,6 +231,8 @@ export default function App() {
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
+  const [highlightedKeyword, setHighlightedKeyword] = useState<string | null>(null);
   
   // Audio Speech state
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -665,6 +677,30 @@ export default function App() {
 
   const activeSection = sequence[activeIndex] || sequence[0];
 
+  const keywordTerms = useMemo(
+    () => [
+      "സ്വദഖ",
+      "സദഖ",
+      "സക്കാത്ത്",
+      "നിസ്കാരം",
+      "തഖ്വ",
+      "റഹ്മത്ത്",
+      "സബ്റ്",
+      "തൗബ",
+      "ഇമാൻ",
+      "കുർആൻ",
+      "ദുആ",
+      "റിസ്ക്",
+      "ജക്കാത്",
+      "വിശ്വാസം",
+      "കരുണ",
+      "നരകം",
+      "സ്വർഗം",
+      "പ്രവാചകൻ",
+    ],
+    []
+  );
+
   // Helper to get reading progress per volume
   const getVolumeProgress = (volId: number) => {
     const volSections = sequence.filter(s => getVolumeForSection(s) === volId);
@@ -892,11 +928,45 @@ export default function App() {
     const raw = sanityChapterContent?.content || sanityChapterContent?.body || "";
     if (!raw) return [];
 
-    return raw
+    const parts = raw
       .split(/\r?\n\r?\n|\r?\n/)
       .map((part) => normalizeMalayalamSpacing(part.trim()))
       .filter(Boolean);
-  }, [sanityChapterContent]);
+
+    const normalizeHeading = (value: string) =>
+      normalizeMalayalamSpacing(value)
+        .toLowerCase()
+        .replace(/[\s\-–—:;,.()\[\]{}"'“”‘’/\\]+/g, "")
+        .replace(/^(?:അധ്യായം|അദ്ധ്യായം|chapter|surah)/g, "")
+        .trim();
+
+    const headingKeys = new Set(
+      [
+        activeSection.title,
+        activeSection.titleEng,
+        activeSection.arabicName || "",
+        `അദ്ധ്യായം ${activeSection.surahId || ""}`,
+        `അധ്യായം ${activeSection.surahId || ""}`,
+        `chapter ${activeSection.surahId || ""}`,
+        `surah ${activeSection.surahId || ""}`,
+      ]
+        .filter(Boolean)
+        .map((item) => normalizeHeading(String(item)))
+        .filter(Boolean)
+    );
+
+    const isLikelyHeadingLine = (line: string, index: number) => {
+      if (index > 4) return false;
+      const key = normalizeHeading(line);
+      if (!key) return false;
+      if (headingKeys.has(key)) return true;
+      if (/^(?:അധ്യായം|അദ്ധ്യായം|chapter|surah)\s*\d+\b/i.test(line)) return true;
+      if (activeSection.surahId && (key === String(activeSection.surahId) || key === `${activeSection.surahId}`)) return true;
+      return false;
+    };
+
+    return parts.filter((line, index) => !isLikelyHeadingLine(line, index));
+  }, [sanityChapterContent, activeSection]);
 
   const renderPlaybackSpeedControl = () => (
     <label className="inline-flex items-center gap-1 text-[10px] font-bold text-text-muted">
@@ -1111,6 +1181,78 @@ export default function App() {
     return results;
   }, [searchQuery, sequence]);
 
+  const keywordHits = useMemo(() => {
+    const hits: KeywordHit[] = [];
+
+    const pushIfMatch = (section: EReaderSection, verseKey: string, textLine: string, lineIndex: number) => {
+      const normalized = normalizeMalayalamSpacing(textLine);
+      const lower = normalized.toLowerCase();
+      for (const term of keywordTerms) {
+        if (lower.includes(term.toLowerCase())) {
+          hits.push({
+            term,
+            sectionId: section.id,
+            sectionTitle: section.title,
+            surahId: section.surahId,
+            verseKey,
+            anchorId: `line-verse-${verseKey}-${lineIndex}`,
+            lineText: normalized,
+          });
+        }
+      }
+    };
+
+    sequence.forEach((sec) => {
+      if (sec.type === "intro" && sec.key && allQuranData[sec.key]) {
+        const verse = allQuranData[sec.key];
+        verse.text.forEach((line, idx) => pushIfMatch(sec, sec.key as string, line, idx));
+        return;
+      }
+
+      if (sec.type === "surah" && sec.surahId) {
+        const verses = getVersesForSurah(sec.surahId);
+        verses.forEach(([key, verse]) => {
+          verse.text.forEach((line, idx) => pushIfMatch(sec, key, line, idx));
+        });
+      }
+    });
+
+    return hits;
+  }, [sequence, keywordTerms]);
+
+  const keywordHitCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    keywordHits.forEach((hit) => map.set(hit.term, (map.get(hit.term) || 0) + 1));
+    return keywordTerms
+      .map((term) => ({ term, count: map.get(term) || 0 }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [keywordHits, keywordTerms]);
+
+  const selectedKeywordHits = useMemo(() => {
+    if (!selectedKeyword) return [] as KeywordHit[];
+    return keywordHits.filter((hit) => hit.term === selectedKeyword).slice(0, 80);
+  }, [keywordHits, selectedKeyword]);
+
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const renderHighlightedKeywordText = (text: string) => {
+    const normalizedText = normalizeMalayalamSpacing(text);
+    if (!highlightedKeyword?.trim()) return normalizedText;
+
+    const matcher = new RegExp(`(${escapeRegExp(highlightedKeyword)})`, "gi");
+    const parts = normalizedText.split(matcher);
+    return parts.map((part, idx) =>
+      part.toLowerCase() === highlightedKeyword.toLowerCase() ? (
+        <mark key={`${part}-${idx}`} className="bg-accent-main/25 text-accent-light px-0.5 rounded-sm">
+          {part}
+        </mark>
+      ) : (
+        <React.Fragment key={`${part}-${idx}`}>{part}</React.Fragment>
+      )
+    );
+  };
+
   // Navigate to a specific section and scroll to verse key
   const handleSearchResultClick = (sectionId: string, verseKey: string) => {
     setActiveSectionId(sectionId);
@@ -1129,6 +1271,33 @@ export default function App() {
         }, 3000);
       }
     }, 200);
+  };
+
+  const handleKeywordHitClick = (hit: KeywordHit) => {
+    stopSpeaking();
+    setViewMode("reader");
+    setActiveSectionId(hit.sectionId);
+    setHighlightedKeyword(hit.term);
+
+    let tries = 0;
+    const maxTries = 18;
+    const scrollToAnchor = () => {
+      const element = document.getElementById(hit.anchorId);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedLineId(hit.anchorId);
+        setTimeout(() => {
+          setHighlightedLineId((prev) => (prev === hit.anchorId ? null : prev));
+        }, 2600);
+        return;
+      }
+      tries += 1;
+      if (tries < maxTries) {
+        setTimeout(scrollToAnchor, 140);
+      }
+    };
+
+    setTimeout(scrollToAnchor, 150);
   };
 
   const scrollToLineAnchor = (anchorId: string) => {
@@ -1826,6 +1995,65 @@ export default function App() {
                   </p>
                 )}
 
+                <div className="mt-4 pt-4 border-t border-border-main/50 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-[11px] font-bold text-accent-main font-serif">പ്രധാന പദങ്ങൾ (Key Terms)</p>
+                    {selectedKeyword && (
+                      <button
+                        onClick={() => {
+                          setSelectedKeyword(null);
+                          setHighlightedKeyword(null);
+                        }}
+                        className="text-[10px] px-2 py-1 rounded-lg border border-border-main text-text-muted hover:text-text-title hover:bg-bg-subcard transition-all cursor-pointer"
+                      >
+                        Clear keyword
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {keywordHitCounts.slice(0, 14).map(({ term, count }) => (
+                      <button
+                        key={term}
+                        onClick={() => {
+                          setSelectedKeyword(term);
+                          setHighlightedKeyword(term);
+                        }}
+                        className={`px-2.5 py-1 rounded-full text-[10px] border transition-all cursor-pointer ${
+                          selectedKeyword === term
+                            ? "bg-accent-main/20 border-accent-main/50 text-accent-light"
+                            : "bg-bg-subcard border-border-main text-text-muted hover:text-text-title hover:bg-bg-card"
+                        }`}
+                        title={`${count} matches`}
+                      >
+                        {term} ({count})
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedKeyword && (
+                    <div className="mt-2 rounded-xl border border-border-main bg-bg-subcard/40 p-2 max-h-48 overflow-y-auto space-y-1">
+                      <p className="text-[10px] text-text-muted font-bold px-1">"{selectedKeyword}" — {selectedKeywordHits.length} കണ്ടെത്തി</p>
+                      {selectedKeywordHits.length === 0 ? (
+                        <p className="text-[11px] text-text-submuted px-1">ഈ പദത്തിന് ഫലങ്ങൾ നിലവിൽ ലഭ്യമല്ല.</p>
+                      ) : (
+                        selectedKeywordHits.map((hit, idx) => (
+                          <button
+                            key={`${hit.verseKey}-${hit.anchorId}-${idx}`}
+                            onClick={() => handleKeywordHitClick(hit)}
+                            className="w-full text-left p-2 rounded-lg border border-border-main bg-bg-card hover:bg-bg-subcard transition-all cursor-pointer"
+                          >
+                            <p className="text-[10px] font-bold text-accent-main">
+                              {hit.surahId ? `സൂറത്ത് ${hit.surahId}` : "ആമുഖം"} • {hit.verseKey}
+                            </p>
+                            <p className="text-[11px] text-text-title font-serif leading-relaxed line-clamp-2">{hit.lineText}</p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Read status check */}
                 <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1972,7 +2200,7 @@ export default function App() {
                               style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                               className="text-text-body font-serif leading-relaxed text-left"
                             >
-                              {normalizedPar}
+                              {renderHighlightedKeywordText(normalizedPar)}
                             </p>
                           </div>
                         );
@@ -2048,7 +2276,7 @@ export default function App() {
                                   style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                                   className="text-text-body font-serif leading-relaxed text-left"
                                 >
-                                  {normalizedPar}
+                                  {renderHighlightedKeywordText(normalizedPar)}
                                 </p>
                               </div>
                             );
