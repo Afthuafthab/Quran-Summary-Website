@@ -1084,104 +1084,95 @@ export default function App() {
       sequence.currentAudio = null;
     };
 
-    const chunkSize = 8;
-    const chunks: Array<{ start: number; end: number; text: string }> = [];
-    for (let i = 0; i < words.length; i += chunkSize) {
-      const slice = words.slice(i, i + chunkSize);
-      chunks.push({
-        start: i,
-        end: i + slice.length - 1,
-        text: slice.map((w) => w.text).join(" "),
-      });
+    // One continuous Malayalam TTS stream for natural voice flow.
+    // Keep only words that fit request budget so highlight always matches played audio.
+    const maxTtsChars = 1800;
+    const spokenWords: Array<{ lineIndex: number; wordIndex: number; text: string }> = [];
+    let charBudget = 0;
+    for (const w of words) {
+      const next = w.text.length + (spokenWords.length > 0 ? 1 : 0);
+      if (charBudget + next > maxTtsChars) break;
+      spokenWords.push(w);
+      charBudget += next;
     }
 
-    const playChunkAudio = (chunk: { start: number; end: number; text: string }): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (sequence.cancelled) return resolve();
+    if (!spokenWords.length) {
+      cleanup();
+      return;
+    }
 
-        const audio = new Audio(`/api/tts?text=${encodeURIComponent(chunk.text)}`);
-        audio.preload = "auto";
-        audio.playbackRate = playbackRate;
-        sequence.currentAudio = audio;
-        audioRef.current = audio;
+    const spokenText = spokenWords.map((w) => w.text).join(" ");
+    const audio = new Audio(`/api/tts?text=${encodeURIComponent(spokenText)}`);
+    audio.preload = "auto";
+    audio.playbackRate = playbackRate;
+    sequence.currentAudio = audio;
+    audioRef.current = audio;
 
-        let lastGlobalWord = -1;
-        let rafId: number | null = null;
+    let lastWordIdx = -1;
+    let rafId: number | null = null;
 
-        const updateByProgress = () => {
-          const duration = Number(audio.duration || 0);
-          if (!Number.isFinite(duration) || duration <= 0) return;
+    const updateByProgress = () => {
+      const duration = Number(audio.duration || 0);
+      if (!Number.isFinite(duration) || duration <= 0) return;
 
-          const localCount = chunk.end - chunk.start + 1;
-          const avgWordSec = duration / Math.max(localCount, 1);
-          const lookAheadSec = Math.min(0.16, Math.max(0.05, avgWordSec * 0.35));
-          const effectiveTime = Math.min(duration, audio.currentTime + lookAheadSec);
+      const total = spokenWords.length;
+      const avgWordSec = duration / Math.max(total, 1);
+      const lookAheadSec = Math.min(0.14, Math.max(0.04, avgWordSec * 0.3));
+      const effectiveTime = Math.min(duration, audio.currentTime + lookAheadSec);
 
-          const progress = Math.max(0, Math.min(1, effectiveTime / duration));
-          const localIndex = Math.min(localCount - 1, Math.floor(progress * localCount));
-          const globalIndex = chunk.start + localIndex;
-          if (globalIndex === lastGlobalWord) return;
+      const progress = Math.max(0, Math.min(1, effectiveTime / duration));
+      const idx = Math.min(total - 1, Math.floor(progress * total));
+      if (idx === lastWordIdx) return;
 
-          lastGlobalWord = globalIndex;
-          const word = words[globalIndex];
-          if (word) {
-            setSpokenWordCursor({ key, lineIndex: word.lineIndex, wordIndex: word.wordIndex });
-          }
-        };
-
-        const stopRaf = () => {
-          if (rafId !== null) {
-            window.cancelAnimationFrame(rafId);
-            rafId = null;
-          }
-        };
-
-        const rafSync = () => {
-          updateByProgress();
-          if (!audio.paused && !audio.ended) {
-            rafId = window.requestAnimationFrame(rafSync);
-          }
-        };
-
-        audio.onplay = () => {
-          const first = words[chunk.start];
-          if (first) {
-            setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
-          }
-          stopRaf();
-          rafId = window.requestAnimationFrame(rafSync);
-        };
-
-        audio.ontimeupdate = updateByProgress;
-        audio.onpause = () => stopRaf();
-        audio.onended = () => {
-          stopRaf();
-          const last = words[chunk.end];
-          if (last) {
-            setSpokenWordCursor({ key, lineIndex: last.lineIndex, wordIndex: last.wordIndex });
-          }
-          resolve();
-        };
-        audio.onerror = () => reject(new Error("Chunk audio failed"));
-
-        audio.play().catch(reject);
-      });
+      lastWordIdx = idx;
+      const word = spokenWords[idx];
+      setSpokenWordCursor({ key, lineIndex: word.lineIndex, wordIndex: word.wordIndex });
     };
 
-    const run = async () => {
-      try {
-        for (const chunk of chunks) {
-          if (sequence.cancelled) break;
-          await playChunkAudio(chunk);
-        }
-      } catch (error) {
-        console.warn("Synced chunk TTS failed:", error);
-      } finally {
-        cleanup();
+    const stopRaf = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
       }
     };
 
-    run();
+    const rafSync = () => {
+      updateByProgress();
+      if (!audio.paused && !audio.ended && !sequence.cancelled) {
+        rafId = window.requestAnimationFrame(rafSync);
+      }
+    };
+
+    audio.onplay = () => {
+      const first = spokenWords[0];
+      if (first) {
+        setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
+      }
+      stopRaf();
+      rafId = window.requestAnimationFrame(rafSync);
+    };
+
+    audio.ontimeupdate = updateByProgress;
+    audio.onpause = () => stopRaf();
+    audio.onended = () => {
+      stopRaf();
+      const last = spokenWords[spokenWords.length - 1];
+      if (last) {
+        setSpokenWordCursor({ key, lineIndex: last.lineIndex, wordIndex: last.wordIndex });
+      }
+      cleanup();
+    };
+    audio.onerror = () => {
+      console.warn("Synced TTS audio failed");
+      stopRaf();
+      cleanup();
+    };
+
+    audio.play().catch((error) => {
+      console.warn("Synced TTS play failed:", error);
+      stopRaf();
+      cleanup();
+    });
   };
 
   const stopSpeaking = () => {
