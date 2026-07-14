@@ -290,6 +290,7 @@ export default function App() {
     }
   });
   const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
+  const [spokenWordCursor, setSpokenWordCursor] = useState<{ key: string; lineIndex: number; wordIndex: number } | null>(null);
 
   // Highlighted search item scroll reference
   const [highlightedVerseKey, setHighlightedVerseKey] = useState<string | null>(null);
@@ -1050,8 +1051,75 @@ export default function App() {
 
     setIsSpeaking(true);
     setSpeakingKey(key);
+    setSpokenWordCursor(null);
 
-    const fullText = textArray.map(normalizeMalayalamSpacing).join(" ");
+    const normalizedLines = textArray.map(normalizeMalayalamSpacing).filter(Boolean);
+    const fullText = normalizedLines.join(" ");
+
+    if (!fullText.trim()) {
+      setIsSpeaking(false);
+      setSpeakingKey(null);
+      return;
+    }
+
+    const buildWordPointers = (lines: string[]) => {
+      const pointers: Array<{ lineIndex: number; wordIndex: number; start: number; end: number }> = [];
+      let cursor = 0;
+
+      lines.forEach((line, lineIndex) => {
+        let inWord = false;
+        let wordStart = 0;
+        let wordIndex = 0;
+
+        for (let i = 0; i <= line.length; i += 1) {
+          const ch = i < line.length ? line[i] : " ";
+          const isSpace = /\s/.test(ch);
+
+          if (!isSpace && !inWord) {
+            inWord = true;
+            wordStart = i;
+          }
+
+          if (isSpace && inWord) {
+            pointers.push({
+              lineIndex,
+              wordIndex,
+              start: cursor + wordStart,
+              end: cursor + i,
+            });
+            wordIndex += 1;
+            inWord = false;
+          }
+        }
+
+        cursor += line.length + 1;
+      });
+
+      return pointers;
+    };
+
+    const wordPointers = buildWordPointers(normalizedLines);
+    const updateSpokenWordByChar = (charIndex: number) => {
+      const idx = wordPointers.findIndex((p) => charIndex >= p.start && charIndex < p.end);
+      if (idx === -1) return;
+      const pointer = wordPointers[idx];
+      setSpokenWordCursor((prev) => {
+        if (
+          prev
+          && prev.key === key
+          && prev.lineIndex === pointer.lineIndex
+          && prev.wordIndex === pointer.wordIndex
+        ) {
+          return prev;
+        }
+        return {
+          key,
+          lineIndex: pointer.lineIndex,
+          wordIndex: pointer.wordIndex,
+        };
+      });
+    };
+
     const cleanText = fullText
       // Pronunciation normalization for key Malayalam-Arabic terms
       .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
@@ -1076,39 +1144,54 @@ export default function App() {
       if (!mlVoice) return false;
 
       const splitForSpeech = (text: string, maxLen = 350) => {
-        const segments = text.split(/(?<=[.!?।])\s+/);
-        const chunks: string[] = [];
-        let buffer = "";
+        const chunks: Array<{ text: string; start: number }> = [];
+        let start = 0;
 
-        for (const seg of segments) {
-          if (!seg) continue;
-          if ((buffer + " " + seg).trim().length > maxLen) {
-            if (buffer.trim()) chunks.push(buffer.trim());
-            buffer = seg;
-          } else {
-            buffer = `${buffer} ${seg}`.trim();
+        while (start < text.length) {
+          let end = Math.min(start + maxLen, text.length);
+          if (end < text.length) {
+            const ws = text.lastIndexOf(" ", end);
+            if (ws > start + 80) {
+              end = ws;
+            }
           }
+
+          const rawChunk = text.slice(start, end);
+          const chunkText = rawChunk.trim();
+          if (chunkText) {
+            const leadTrim = rawChunk.indexOf(chunkText);
+            chunks.push({ text: chunkText, start: start + Math.max(leadTrim, 0) });
+          }
+
+          start = end;
+          while (start < text.length && text[start] === " ") start += 1;
         }
 
-        if (buffer.trim()) chunks.push(buffer.trim());
-        return chunks.length ? chunks : [text];
+        return chunks.length ? chunks : [{ text, start: 0 }];
       };
 
-      const chunks = splitForSpeech(cleanText);
+      const chunks = splitForSpeech(fullText);
       let idx = 0;
 
       const speakNext = () => {
         if (idx >= chunks.length) {
           setIsSpeaking(false);
           setSpeakingKey(null);
+          setSpokenWordCursor(null);
           return;
         }
 
-        const utterance = new SpeechSynthesisUtterance(chunks[idx]);
+        const activeChunk = chunks[idx];
+        const utterance = new SpeechSynthesisUtterance(activeChunk.text);
         utterance.lang = mlVoice?.lang || "ml-IN";
         if (mlVoice) utterance.voice = mlVoice;
         utterance.rate = playbackRate;
         utterance.pitch = 1;
+
+        utterance.onboundary = (event: SpeechSynthesisEvent) => {
+          const localChar = Number(event.charIndex || 0);
+          updateSpokenWordByChar(activeChunk.start + localChar);
+        };
 
         utterance.onend = () => {
           idx += 1;
@@ -1119,6 +1202,7 @@ export default function App() {
           console.error("Web Speech synthesis error:", e);
           setIsSpeaking(false);
           setSpeakingKey(null);
+          setSpokenWordCursor(null);
         };
 
         audioRef.current = {
@@ -1130,6 +1214,8 @@ export default function App() {
         synth.speak(utterance);
       };
 
+      // highlight first word immediately
+      updateSpokenWordByChar(0);
       speakNext();
       return true;
     };
@@ -1144,6 +1230,7 @@ export default function App() {
     if (!ttsText) {
       setIsSpeaking(false);
       setSpeakingKey(null);
+      setSpokenWordCursor(null);
       return;
     }
 
@@ -1153,15 +1240,33 @@ export default function App() {
     audio.playbackRate = playbackRate;
     audioRef.current = audio;
 
+    // Approximate progressive word highlight for remote TTS fallback
+    let timer: number | null = null;
+    if (wordPointers.length > 0) {
+      let pointerIdx = 0;
+      setSpokenWordCursor({ key, lineIndex: wordPointers[0].lineIndex, wordIndex: wordPointers[0].wordIndex });
+      const stepMs = Math.max(90, Math.floor((280 / Math.max(playbackRate, 0.7))));
+      timer = window.setInterval(() => {
+        pointerIdx += 1;
+        if (pointerIdx >= wordPointers.length) return;
+        const p = wordPointers[pointerIdx];
+        setSpokenWordCursor({ key, lineIndex: p.lineIndex, wordIndex: p.wordIndex });
+      }, stepMs);
+    }
+
     audio.play().catch(err => {
       console.warn("Audio playback failed:", err);
+      if (timer) window.clearInterval(timer);
       setIsSpeaking(false);
       setSpeakingKey(null);
+      setSpokenWordCursor(null);
     });
 
     audio.onended = () => {
+      if (timer) window.clearInterval(timer);
       setIsSpeaking(false);
       setSpeakingKey(null);
+      setSpokenWordCursor(null);
     };
   };
 
@@ -1179,6 +1284,7 @@ export default function App() {
     }
     setIsSpeaking(false);
     setSpeakingKey(null);
+    setSpokenWordCursor(null);
   };
 
   // Local exact search of manuscript text
@@ -1279,21 +1385,50 @@ export default function App() {
 
   const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const renderHighlightedKeywordText = (text: string) => {
+  const renderHighlightedKeywordText = (text: string, lineKey?: string, lineIndex?: number) => {
     const normalizedText = normalizeMalayalamSpacing(text);
-    if (!highlightedKeyword?.trim()) return normalizedText;
+    const parts = normalizedText.split(/(\s+)/);
+    let localWordIndex = 0;
 
-    const matcher = new RegExp(`(${escapeRegExp(highlightedKeyword)})`, "gi");
-    const parts = normalizedText.split(matcher);
-    return parts.map((part, idx) =>
-      part.toLowerCase() === highlightedKeyword.toLowerCase() ? (
-        <mark key={`${part}-${idx}`} className="bg-accent-main/25 text-accent-light px-0.5 rounded-sm">
-          {part}
-        </mark>
-      ) : (
-        <React.Fragment key={`${part}-${idx}`}>{part}</React.Fragment>
-      )
-    );
+    return parts.map((part, idx) => {
+      if (!part) return null;
+      if (/^\s+$/.test(part)) {
+        return <React.Fragment key={`space-${idx}`}>{part}</React.Fragment>;
+      }
+
+      const isKeywordMatch = Boolean(highlightedKeyword?.trim())
+        && part.toLowerCase().includes((highlightedKeyword || "").toLowerCase());
+
+      const isSpokenWord = Boolean(
+        spokenWordCursor
+        && lineKey
+        && typeof lineIndex === "number"
+        && spokenWordCursor.key === lineKey
+        && spokenWordCursor.lineIndex === lineIndex
+        && spokenWordCursor.wordIndex === localWordIndex
+      );
+
+      const key = `tok-${lineKey || "na"}-${lineIndex ?? -1}-${idx}`;
+      localWordIndex += 1;
+
+      if (isSpokenWord) {
+        return (
+          <mark key={key} className="bg-amber-400/45 text-text-title px-0.5 rounded-sm ring-1 ring-amber-300/70">
+            {part}
+          </mark>
+        );
+      }
+
+      if (isKeywordMatch) {
+        return (
+          <mark key={key} className="bg-accent-main/25 text-accent-light px-0.5 rounded-sm">
+            {part}
+          </mark>
+        );
+      }
+
+      return <React.Fragment key={key}>{part}</React.Fragment>;
+    });
   };
 
   // Navigate to a specific section and scroll to verse key
@@ -2451,7 +2586,7 @@ export default function App() {
                               style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                               className="text-text-body font-serif leading-relaxed text-left"
                             >
-                              {renderHighlightedKeywordText(normalizedPar)}
+                              {renderHighlightedKeywordText(normalizedPar, `sanity_chapter_${activeSection.surahId}`, index)}
                             </p>
                           </div>
                         );
@@ -2527,7 +2662,7 @@ export default function App() {
                                   style={{ fontSize: `${17 + fontDelta}px`, lineHeight: "1.85" }}
                                   className="text-text-body font-serif leading-relaxed text-left"
                                 >
-                                  {renderHighlightedKeywordText(normalizedPar)}
+                                  {renderHighlightedKeywordText(normalizedPar, key, index)}
                                 </p>
                               </div>
                             );
