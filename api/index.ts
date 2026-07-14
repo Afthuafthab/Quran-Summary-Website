@@ -2,8 +2,8 @@ import express from "express";
 import path from "path";
 import { promises as fs } from "fs";
 import { createClient } from "@sanity/client";
-import { quranData } from "../src/data/pmd_converted_content";
-import { volume2Data } from "../src/data/volume2";
+import { quranData } from "../src/data/pmd_converted_content.ts";
+import { volume2Data } from "../src/data/volume2.ts";
 
 const sanityClient = createClient({
   projectId: process.env.VITE_SANITY_PROJECT_ID || "lgqos9pf",
