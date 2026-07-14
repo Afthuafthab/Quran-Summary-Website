@@ -1101,17 +1101,44 @@ export default function App() {
       sequence.currentAudio = null;
     };
 
-    const fullText = normalizedLines.join(" ").slice(0, 1800);
+    const sourceAnchors =
+      Array.isArray(lineAnchors) && lineAnchors.length === normalizedLines.length
+        ? lineAnchors
+        : normalizedLines.map((_, idx) => `${key}-line-${idx}`);
+
+    // Keep line list and spoken text aligned (avoid truncating mid-line).
+    const maxTtsChars = 1800;
+    const spokenLines: string[] = [];
+    const effectiveAnchors: string[] = [];
+    let budget = 0;
+    for (let i = 0; i < normalizedLines.length; i += 1) {
+      const addition = normalizedLines[i].length + (spokenLines.length > 0 ? 1 : 0);
+      if (budget + addition > maxTtsChars) break;
+      spokenLines.push(normalizedLines[i]);
+      effectiveAnchors.push(sourceAnchors[i]);
+      budget += addition;
+    }
+
+    if (!spokenLines.length) {
+      cleanup();
+      return;
+    }
+
+    const fullText = spokenLines.join(" ");
+    const lineWeights = spokenLines.map((line) => Math.max(1, line.replace(/\s+/g, "").length));
+    const totalWeight = lineWeights.reduce((a, b) => a + b, 0);
+    const cumulative: number[] = [];
+    let run = 0;
+    for (const w of lineWeights) {
+      run += w;
+      cumulative.push(run);
+    }
+
     const audio = new Audio(`/api/tts?text=${encodeURIComponent(fullText)}`);
     audio.preload = "auto";
     audio.playbackRate = playbackRate;
     sequence.currentAudio = audio;
     audioRef.current = audio;
-
-    const effectiveAnchors =
-      Array.isArray(lineAnchors) && lineAnchors.length === normalizedLines.length
-        ? lineAnchors
-        : normalizedLines.map((_, idx) => `${key}-line-${idx}`);
 
     let lastLineIdx = -1;
     let rafId: number | null = null;
@@ -1120,9 +1147,10 @@ export default function App() {
       const duration = Number(audio.duration || 0);
       if (!Number.isFinite(duration) || duration <= 0) return;
 
-      const total = normalizedLines.length;
       const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
-      const idx = Math.min(total - 1, Math.floor(progress * total));
+      const targetWeight = Math.max(1, Math.floor(progress * totalWeight));
+      let idx = cumulative.findIndex((c) => c >= targetWeight);
+      if (idx < 0) idx = spokenLines.length - 1;
       if (idx === lastLineIdx) return;
 
       lastLineIdx = idx;
