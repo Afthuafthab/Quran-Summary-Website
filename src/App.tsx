@@ -1243,14 +1243,25 @@ export default function App() {
     audioRef.current = audio;
 
     // Progress-based highlighting synced with actual audio time (fallback /api/tts)
+    // Keep updates conservative so highlight never runs ahead like a fast ticker.
     let rafId: number | null = null;
     let lastWordIdx = -1;
+    let lastAdvanceTs = 0;
+    let minAdvanceMs = 260;
 
     const stopRafSync = () => {
       if (rafId !== null) {
         window.cancelAnimationFrame(rafId);
         rafId = null;
       }
+    };
+
+    const applyWordIndex = (idx: number) => {
+      const bounded = Math.max(0, Math.min(wordPointers.length - 1, idx));
+      if (bounded === lastWordIdx) return;
+      lastWordIdx = bounded;
+      const p = wordPointers[bounded];
+      setSpokenWordCursor({ key, lineIndex: p.lineIndex, wordIndex: p.wordIndex });
     };
 
     const syncWordFromAudioTime = () => {
@@ -1261,13 +1272,16 @@ export default function App() {
         return;
       }
 
+      const now = performance.now();
       const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
-      const nextIdx = Math.min(wordPointers.length - 1, Math.floor(progress * wordPointers.length));
+      const targetIdx = Math.min(wordPointers.length - 1, Math.floor(progress * wordPointers.length));
 
-      if (nextIdx !== lastWordIdx) {
-        lastWordIdx = nextIdx;
-        const p = wordPointers[nextIdx];
-        setSpokenWordCursor({ key, lineIndex: p.lineIndex, wordIndex: p.wordIndex });
+      if (targetIdx > lastWordIdx && now - lastAdvanceTs >= minAdvanceMs) {
+        const gap = targetIdx - lastWordIdx;
+        // Advance mostly one word at a time; allow +2 only when far behind.
+        const step = gap > 8 ? 2 : 1;
+        applyWordIndex(lastWordIdx < 0 ? 0 : lastWordIdx + step);
+        lastAdvanceTs = now;
       }
 
       if (!audio.paused && !audio.ended) {
@@ -1277,10 +1291,19 @@ export default function App() {
 
     audio.onplay = () => {
       if (wordPointers.length > 0) {
-        lastWordIdx = 0;
-        const first = wordPointers[0];
-        setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
+        applyWordIndex(0);
       }
+
+      const duration = Number(audio.duration || 0);
+      if (Number.isFinite(duration) && duration > 0 && wordPointers.length > 0) {
+        const avgWordMs = (duration * 1000) / wordPointers.length;
+        // Clamp to human-readable pace; prevents train-speed flashing.
+        minAdvanceMs = Math.max(180, Math.min(650, avgWordMs * 0.9));
+      } else {
+        minAdvanceMs = 260;
+      }
+
+      lastAdvanceTs = performance.now();
       stopRafSync();
       rafId = window.requestAnimationFrame(syncWordFromAudioTime);
     };
