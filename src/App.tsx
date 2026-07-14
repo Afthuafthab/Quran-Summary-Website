@@ -1106,12 +1106,18 @@ export default function App() {
         audioRef.current = audio;
 
         let lastGlobalWord = -1;
+        let rafId: number | null = null;
+
         const updateByProgress = () => {
           const duration = Number(audio.duration || 0);
           if (!Number.isFinite(duration) || duration <= 0) return;
 
-          const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
           const localCount = chunk.end - chunk.start + 1;
+          const avgWordSec = duration / Math.max(localCount, 1);
+          const lookAheadSec = Math.min(0.16, Math.max(0.05, avgWordSec * 0.35));
+          const effectiveTime = Math.min(duration, audio.currentTime + lookAheadSec);
+
+          const progress = Math.max(0, Math.min(1, effectiveTime / duration));
           const localIndex = Math.min(localCount - 1, Math.floor(progress * localCount));
           const globalIndex = chunk.start + localIndex;
           if (globalIndex === lastGlobalWord) return;
@@ -1123,15 +1129,33 @@ export default function App() {
           }
         };
 
+        const stopRaf = () => {
+          if (rafId !== null) {
+            window.cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+        };
+
+        const rafSync = () => {
+          updateByProgress();
+          if (!audio.paused && !audio.ended) {
+            rafId = window.requestAnimationFrame(rafSync);
+          }
+        };
+
         audio.onplay = () => {
           const first = words[chunk.start];
           if (first) {
             setSpokenWordCursor({ key, lineIndex: first.lineIndex, wordIndex: first.wordIndex });
           }
+          stopRaf();
+          rafId = window.requestAnimationFrame(rafSync);
         };
 
         audio.ontimeupdate = updateByProgress;
+        audio.onpause = () => stopRaf();
         audio.onended = () => {
+          stopRaf();
           const last = words[chunk.end];
           if (last) {
             setSpokenWordCursor({ key, lineIndex: last.lineIndex, wordIndex: last.wordIndex });
