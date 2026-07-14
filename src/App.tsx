@@ -1040,7 +1040,7 @@ export default function App() {
     </label>
   );
 
-  // Read Aloud handler
+  // Read Aloud handler (strictly word-synced with spoken output)
   const handleReadAloud = (key: string, textArray: string[]) => {
     if (isSpeaking && speakingKey === key) {
       stopSpeaking();
@@ -1049,283 +1049,93 @@ export default function App() {
 
     stopSpeaking();
 
+    const normalizedLines = textArray.map(normalizeMalayalamSpacing).filter(Boolean);
+    if (!normalizedLines.length) return;
+
+    const words: Array<{ lineIndex: number; wordIndex: number; text: string }> = [];
+    normalizedLines.forEach((line, lineIndex) => {
+      const tokens = line.split(/\s+/).map((w) => w.trim()).filter(Boolean);
+      tokens.forEach((token, wordIndex) => {
+        words.push({ lineIndex, wordIndex, text: token });
+      });
+    });
+
+    if (!words.length) return;
+
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setIsSpeaking(false);
+      setSpeakingKey(null);
+      setSpokenWordCursor(null);
+      alert("Strict word-sync requires browser speech support. ഈ ബ്രൗസറിൽ അത് ലഭ്യമല്ല.");
+      return;
+    }
+
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const voices = availableVoices.length ? availableVoices : synth.getVoices();
+    const selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith("ml")) || voices[0];
+
+    if (!selectedVoice) {
+      setIsSpeaking(false);
+      setSpeakingKey(null);
+      setSpokenWordCursor(null);
+      alert("Voice engine ലഭ്യമല്ല. ദയവായി browser voice settings enable ചെയ്യുക.");
+      return;
+    }
+
     setIsSpeaking(true);
     setSpeakingKey(key);
     setSpokenWordCursor(null);
 
-    const normalizedLines = textArray.map(normalizeMalayalamSpacing).filter(Boolean);
-    const fullText = normalizedLines.join(" ");
+    let active = true;
+    let wordPtr = 0;
 
-    if (!fullText.trim()) {
-      setIsSpeaking(false);
-      setSpeakingKey(null);
-      return;
-    }
-
-    const buildWordPointers = (lines: string[]) => {
-      const pointers: Array<{ lineIndex: number; wordIndex: number; start: number; end: number }> = [];
-      let cursor = 0;
-
-      lines.forEach((line, lineIndex) => {
-        let inWord = false;
-        let wordStart = 0;
-        let wordIndex = 0;
-
-        for (let i = 0; i <= line.length; i += 1) {
-          const ch = i < line.length ? line[i] : " ";
-          const isSpace = /\s/.test(ch);
-
-          if (!isSpace && !inWord) {
-            inWord = true;
-            wordStart = i;
-          }
-
-          if (isSpace && inWord) {
-            pointers.push({
-              lineIndex,
-              wordIndex,
-              start: cursor + wordStart,
-              end: cursor + i,
-            });
-            wordIndex += 1;
-            inWord = false;
-          }
-        }
-
-        cursor += line.length + 1;
-      });
-
-      return pointers;
-    };
-
-    const wordPointers = buildWordPointers(normalizedLines);
-    const updateSpokenWordByChar = (charIndex: number) => {
-      const idx = wordPointers.findIndex((p) => charIndex >= p.start && charIndex < p.end);
-      if (idx === -1) return;
-      const pointer = wordPointers[idx];
-      setSpokenWordCursor((prev) => {
-        if (
-          prev
-          && prev.key === key
-          && prev.lineIndex === pointer.lineIndex
-          && prev.wordIndex === pointer.wordIndex
-        ) {
-          return prev;
-        }
-        return {
-          key,
-          lineIndex: pointer.lineIndex,
-          wordIndex: pointer.wordIndex,
-        };
-      });
-    };
-
-    const cleanText = fullText
-      // Pronunciation normalization for key Malayalam-Arabic terms
-      .replace(/അല്ലാഹു/g, "അല്ലാഹൂ")
-      .replace(/അല്-ലാഹു|അൽ-ലാഹു|അൽ ലാഹു/g, "അല്ലാഹൂ")
-      // Reference pronunciation normalization (e.g. 6:154-158, 14:4)
-      .replace(/(\d+)\s*:\s*(\d+)\s*-\s*(\d+)/g, (_, s, a1, a2) => `സൂറത്ത് ${s} വചനം ${a1} മുതൽ ${a2} വരെ`)
-      .replace(/(\d+)\s*:\s*(\d+)/g, (_, s, a) => `സൂറത്ത് ${s} വചനം ${a}`)
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const speakWithWebSpeech = () => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
-
-      const synth = window.speechSynthesis;
-      synth.cancel();
-
-      const voices = availableVoices.length ? availableVoices : synth.getVoices();
-      const mlVoice = voices.find(v => v.lang.toLowerCase().startsWith("ml"));
-
-      // Only use browser speech when a real Malayalam voice is present.
-      // Otherwise fallback to /api/tts (forced Malayalam via tl=ml).
-      if (!mlVoice) return false;
-
-      const splitForSpeech = (text: string, maxLen = 350) => {
-        const chunks: Array<{ text: string; start: number }> = [];
-        let start = 0;
-
-        while (start < text.length) {
-          let end = Math.min(start + maxLen, text.length);
-          if (end < text.length) {
-            const ws = text.lastIndexOf(" ", end);
-            if (ws > start + 80) {
-              end = ws;
-            }
-          }
-
-          const rawChunk = text.slice(start, end);
-          const chunkText = rawChunk.trim();
-          if (chunkText) {
-            const leadTrim = rawChunk.indexOf(chunkText);
-            chunks.push({ text: chunkText, start: start + Math.max(leadTrim, 0) });
-          }
-
-          start = end;
-          while (start < text.length && text[start] === " ") start += 1;
-        }
-
-        return chunks.length ? chunks : [{ text, start: 0 }];
-      };
-
-      const chunks = splitForSpeech(fullText);
-      let idx = 0;
-
-      const speakNext = () => {
-        if (idx >= chunks.length) {
-          setIsSpeaking(false);
-          setSpeakingKey(null);
-          setSpokenWordCursor(null);
-          return;
-        }
-
-        const activeChunk = chunks[idx];
-        const utterance = new SpeechSynthesisUtterance(activeChunk.text);
-        utterance.lang = mlVoice?.lang || "ml-IN";
-        if (mlVoice) utterance.voice = mlVoice;
-        utterance.rate = playbackRate;
-        utterance.pitch = 1;
-
-        utterance.onstart = () => {
-          updateSpokenWordByChar(activeChunk.start);
-        };
-
-        utterance.onboundary = (event: SpeechSynthesisEvent) => {
-          const localChar = Number(event.charIndex || 0);
-          updateSpokenWordByChar(activeChunk.start + localChar);
-        };
-
-        utterance.onend = () => {
-          idx += 1;
-          speakNext();
-        };
-
-        utterance.onerror = (e) => {
-          console.error("Web Speech synthesis error:", e);
-          setIsSpeaking(false);
-          setSpeakingKey(null);
-          setSpokenWordCursor(null);
-        };
-
-        audioRef.current = {
-          pause: () => {
-            synth.cancel();
-          }
-        } as any;
-
-        synth.speak(utterance);
-      };
-
-      speakNext();
-      return true;
-    };
-
-    // Prefer instant client-side Malayalam speech first (no network wait)
-    const started = speakWithWebSpeech();
-    if (started) return;
-
-    // Fallback to server-side Malayalam TTS only if browser Malayalam voice is unavailable
-    // Cap URL payload to keep request reliable across browsers/proxies.
-    const ttsText = cleanText.substring(0, 1200);
-    if (!ttsText) {
+    const cleanup = () => {
+      active = false;
       setIsSpeaking(false);
       setSpeakingKey(null);
       setSpokenWordCursor(null);
-      return;
-    }
-
-    const audioUrl = `/api/tts?text=${encodeURIComponent(ttsText)}`;
-    const audio = new Audio(audioUrl);
-    audio.preload = "auto";
-    audio.playbackRate = playbackRate;
-    audioRef.current = audio;
-
-    // Progress-based highlighting synced with actual audio time (fallback /api/tts)
-    // Keep updates conservative so highlight never runs ahead like a fast ticker.
-    let rafId: number | null = null;
-    let lastWordIdx = -1;
-    let lastAdvanceTs = 0;
-    let minAdvanceMs = 260;
-
-    const stopRafSync = () => {
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-        rafId = null;
-      }
     };
 
-    const applyWordIndex = (idx: number) => {
-      const bounded = Math.max(0, Math.min(wordPointers.length - 1, idx));
-      if (bounded === lastWordIdx) return;
-      lastWordIdx = bounded;
-      const p = wordPointers[bounded];
-      setSpokenWordCursor({ key, lineIndex: p.lineIndex, wordIndex: p.wordIndex });
-    };
-
-    const syncWordFromAudioTime = () => {
-      if (!wordPointers.length) return;
-      const duration = Number(audio.duration || 0);
-      if (!Number.isFinite(duration) || duration <= 0) {
-        rafId = window.requestAnimationFrame(syncWordFromAudioTime);
+    const speakNextWord = () => {
+      if (!active) return;
+      if (wordPtr >= words.length) {
+        cleanup();
         return;
       }
 
-      const now = performance.now();
-      const progress = Math.max(0, Math.min(1, audio.currentTime / duration));
-      const targetIdx = Math.min(wordPointers.length - 1, Math.floor(progress * wordPointers.length));
+      const current = words[wordPtr];
+      setSpokenWordCursor({ key, lineIndex: current.lineIndex, wordIndex: current.wordIndex });
 
-      if (targetIdx > lastWordIdx && now - lastAdvanceTs >= minAdvanceMs) {
-        const gap = targetIdx - lastWordIdx;
-        // Advance mostly one word at a time; allow +2 only when far behind.
-        const step = gap > 8 ? 2 : 1;
-        applyWordIndex(lastWordIdx < 0 ? 0 : lastWordIdx + step);
-        lastAdvanceTs = now;
-      }
+      const utterance = new SpeechSynthesisUtterance(current.text);
+      utterance.lang = selectedVoice.lang || "ml-IN";
+      utterance.voice = selectedVoice;
+      utterance.rate = playbackRate;
+      utterance.pitch = 1;
 
-      if (!audio.paused && !audio.ended) {
-        rafId = window.requestAnimationFrame(syncWordFromAudioTime);
-      }
+      utterance.onend = () => {
+        if (!active) return;
+        wordPtr += 1;
+        speakNextWord();
+      };
+
+      utterance.onerror = (e) => {
+        console.error("Strict word-sync speech error:", e);
+        cleanup();
+      };
+
+      audioRef.current = {
+        pause: () => {
+          active = false;
+          synth.cancel();
+        }
+      } as any;
+
+      synth.speak(utterance);
     };
 
-    audio.onplay = () => {
-      if (wordPointers.length > 0) {
-        applyWordIndex(0);
-      }
-
-      const duration = Number(audio.duration || 0);
-      if (Number.isFinite(duration) && duration > 0 && wordPointers.length > 0) {
-        const avgWordMs = (duration * 1000) / wordPointers.length;
-        // Clamp to human-readable pace; prevents train-speed flashing.
-        minAdvanceMs = Math.max(180, Math.min(650, avgWordMs * 0.9));
-      } else {
-        minAdvanceMs = 260;
-      }
-
-      lastAdvanceTs = performance.now();
-      stopRafSync();
-      rafId = window.requestAnimationFrame(syncWordFromAudioTime);
-    };
-
-    audio.onpause = () => {
-      stopRafSync();
-    };
-
-    audio.play().catch(err => {
-      console.warn("Audio playback failed:", err);
-      stopRafSync();
-      setIsSpeaking(false);
-      setSpeakingKey(null);
-      setSpokenWordCursor(null);
-    });
-
-    audio.onended = () => {
-      stopRafSync();
-      setIsSpeaking(false);
-      setSpeakingKey(null);
-      setSpokenWordCursor(null);
-    };
+    speakNextWord();
   };
 
   const stopSpeaking = () => {
