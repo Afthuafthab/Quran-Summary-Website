@@ -274,6 +274,10 @@ export default function App() {
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsSequenceRef = useRef<{ cancelled: boolean; currentAudio: HTMLAudioElement | null }>({
+    cancelled: false,
+    currentAudio: null,
+  });
 
   // Read progress tracker
   const [readSections, setReadSections] = useState<string[]>(() => {
@@ -1040,7 +1044,7 @@ export default function App() {
     </label>
   );
 
-  // Read Aloud handler (strictly word-synced with spoken output)
+  // Read Aloud handler (strict sync: one spoken word ↔ one highlighted word)
   const handleReadAloud = (key: string, textArray: string[]) => {
     if (isSpeaking && speakingKey === key) {
       stopSpeaking();
@@ -1054,91 +1058,80 @@ export default function App() {
 
     const words: Array<{ lineIndex: number; wordIndex: number; text: string }> = [];
     normalizedLines.forEach((line, lineIndex) => {
-      const tokens = line.split(/\s+/).map((w) => w.trim()).filter(Boolean);
-      tokens.forEach((token, wordIndex) => {
-        words.push({ lineIndex, wordIndex, text: token });
-      });
+      line
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter(Boolean)
+        .forEach((token, wordIndex) => {
+          words.push({ lineIndex, wordIndex, text: token });
+        });
     });
 
     if (!words.length) return;
-
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      setIsSpeaking(false);
-      setSpeakingKey(null);
-      setSpokenWordCursor(null);
-      alert("Strict word-sync requires browser speech support. ഈ ബ്രൗസറിൽ അത് ലഭ്യമല്ല.");
-      return;
-    }
-
-    const synth = window.speechSynthesis;
-    synth.cancel();
-
-    const voices = availableVoices.length ? availableVoices : synth.getVoices();
-    const selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith("ml")) || voices[0];
-
-    if (!selectedVoice) {
-      setIsSpeaking(false);
-      setSpeakingKey(null);
-      setSpokenWordCursor(null);
-      alert("Voice engine ലഭ്യമല്ല. ദയവായി browser voice settings enable ചെയ്യുക.");
-      return;
-    }
 
     setIsSpeaking(true);
     setSpeakingKey(key);
     setSpokenWordCursor(null);
 
-    let active = true;
-    let wordPtr = 0;
+    const sequence = ttsSequenceRef.current;
+    sequence.cancelled = false;
+    sequence.currentAudio = null;
 
     const cleanup = () => {
-      active = false;
       setIsSpeaking(false);
       setSpeakingKey(null);
       setSpokenWordCursor(null);
+      sequence.currentAudio = null;
     };
 
-    const speakNextWord = () => {
-      if (!active) return;
-      if (wordPtr >= words.length) {
-        cleanup();
-        return;
-      }
+    const playWordAudio = (wordText: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        if (sequence.cancelled) return resolve();
 
-      const current = words[wordPtr];
-      setSpokenWordCursor({ key, lineIndex: current.lineIndex, wordIndex: current.wordIndex });
+        const audio = new Audio(`/api/tts?text=${encodeURIComponent(wordText)}`);
+        audio.preload = "auto";
+        audio.playbackRate = playbackRate;
+        sequence.currentAudio = audio;
+        audioRef.current = audio;
 
-      const utterance = new SpeechSynthesisUtterance(current.text);
-      utterance.lang = selectedVoice.lang || "ml-IN";
-      utterance.voice = selectedVoice;
-      utterance.rate = playbackRate;
-      utterance.pitch = 1;
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error("Word audio failed"));
 
-      utterance.onend = () => {
-        if (!active) return;
-        wordPtr += 1;
-        speakNextWord();
-      };
+        audio.play().catch(reject);
+      });
+    };
 
-      utterance.onerror = (e) => {
-        console.error("Strict word-sync speech error:", e);
-        cleanup();
-      };
-
-      audioRef.current = {
-        pause: () => {
-          active = false;
-          synth.cancel();
+    const run = async () => {
+      try {
+        for (let i = 0; i < words.length; i += 1) {
+          if (sequence.cancelled) break;
+          const w = words[i];
+          setSpokenWordCursor({ key, lineIndex: w.lineIndex, wordIndex: w.wordIndex });
+          await playWordAudio(w.text);
         }
-      } as any;
-
-      synth.speak(utterance);
+      } catch (error) {
+        console.warn("Strict synced TTS sequence failed:", error);
+      } finally {
+        cleanup();
+      }
     };
 
-    speakNextWord();
+    run();
   };
 
   const stopSpeaking = () => {
+    const sequence = ttsSequenceRef.current;
+    sequence.cancelled = true;
+
+    if (sequence.currentAudio) {
+      try {
+        sequence.currentAudio.pause();
+      } catch {
+        // no-op
+      }
+      sequence.currentAudio = null;
+    }
+
     if (audioRef.current) {
       try {
         audioRef.current.pause();
@@ -1147,9 +1140,11 @@ export default function App() {
       }
       audioRef.current = null;
     }
+
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+
     setIsSpeaking(false);
     setSpeakingKey(null);
     setSpokenWordCursor(null);
