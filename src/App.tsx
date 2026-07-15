@@ -254,6 +254,8 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatListening, setChatListening] = useState(false);
+  const [chatVoiceError, setChatVoiceError] = useState<string>("");
+  const [chatVoiceSupported, setChatVoiceSupported] = useState(true);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: "chat-welcome",
@@ -302,6 +304,7 @@ export default function App() {
   const [sanityChapterLoadState, setSanityChapterLoadState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
   const [isSectionLoading, setIsSectionLoading] = useState(false);
   const sanityChapterCacheRef = useRef<Record<number, SanityChapterContent | null>>({});
+  const sanityChapterInFlightRef = useRef<Record<number, Promise<SanityChapterContent | null> | null>>({});
   const historySyncBlockedRef = useRef(false);
   const historyBootstrappedRef = useRef(false);
 
@@ -335,6 +338,46 @@ export default function App() {
     }
   };
 
+  const SANITY_CACHE_KEY = "quran_sanity_chapter_cache_v1";
+
+  const persistSanityChapterCache = () => {
+    try {
+      sessionStorage.setItem(SANITY_CACHE_KEY, JSON.stringify(sanityChapterCacheRef.current));
+    } catch {
+      // ignore cache persistence errors
+    }
+  };
+
+  const fetchSanityChapterWithCache = async (chapterNumber: number): Promise<SanityChapterContent | null> => {
+    if (Object.prototype.hasOwnProperty.call(sanityChapterCacheRef.current, chapterNumber)) {
+      return sanityChapterCacheRef.current[chapterNumber];
+    }
+
+    const inFlight = sanityChapterInFlightRef.current[chapterNumber];
+    if (inFlight) return inFlight;
+
+    const request = fetch(`/api/sanity/chapter?chapterNumber=${chapterNumber}`)
+      .then((response) => parseJsonSafe(response))
+      .then((payload) => {
+        const data = (payload?.chapter ?? payload?.data ?? null) as SanityChapterContent | null;
+        sanityChapterCacheRef.current[chapterNumber] = data;
+        persistSanityChapterCache();
+        return data;
+      })
+      .catch((error) => {
+        console.error(`Failed to fetch chapter ${chapterNumber}:`, error);
+        sanityChapterCacheRef.current[chapterNumber] = null;
+        persistSanityChapterCache();
+        return null;
+      })
+      .finally(() => {
+        sanityChapterInFlightRef.current[chapterNumber] = null;
+      });
+
+    sanityChapterInFlightRef.current[chapterNumber] = request;
+    return request;
+  };
+
   const normalizeMalayalamSpacing = (text: string) => {
     return text
       .replace(/\u00A0/g, " ")
@@ -344,6 +387,33 @@ export default function App() {
       .replace(/\s+\)/g, ")")
       .trim();
   };
+
+  useEffect(() => {
+    const w = window as any;
+    const Recognition = w.SpeechRecognition || w.webkitSpeechRecognition;
+    setChatVoiceSupported(Boolean(Recognition));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(SANITY_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, SanityChapterContent | null>;
+      const hydrated: Record<number, SanityChapterContent | null> = {};
+      Object.entries(parsed).forEach(([key, value]) => {
+        const n = Number(key);
+        if (Number.isFinite(n) && n >= 1 && n <= 114) {
+          hydrated[n] = value as SanityChapterContent | null;
+        }
+      });
+      if (Object.keys(hydrated).length > 0) {
+        sanityChapterCacheRef.current = hydrated;
+      }
+    } catch {
+      // ignore malformed cache
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -855,19 +925,9 @@ export default function App() {
       }
 
       setSanityChapterLoadState("loading");
-      try {
-        const response = await fetch(`/api/sanity/chapter?chapterNumber=${chapterNumber}`);
-        const payload = await parseJsonSafe(response);
-        const data = (payload?.chapter ?? payload?.data ?? null) as SanityChapterContent | null;
-
-        sanityChapterCacheRef.current[chapterNumber] = data;
-        setSanityChapterContent(data);
-        setSanityChapterLoadState(data ? "ready" : "empty");
-      } catch (error) {
-        console.error("Failed to load Sanity chapter content:", error);
-        setSanityChapterContent(null);
-        setSanityChapterLoadState("error");
-      }
+      const data = await fetchSanityChapterWithCache(chapterNumber);
+      setSanityChapterContent(data);
+      setSanityChapterLoadState(data ? "ready" : "empty");
     };
 
     loadSanityChapter();
@@ -876,22 +936,16 @@ export default function App() {
   useEffect(() => {
     if (activeSection.type !== "surah") return;
 
-    const offsets = [1, 2, 3, -1, -2];
+    const offsets = [1, 2, 3, -1, -2, 4, -3];
     const neighborIds = offsets
       .map((offset) => sequence[activeIndex + offset]?.surahId)
       .filter((id): id is number => typeof id === "number");
 
     neighborIds.forEach((chapterNumber) => {
       if (Object.prototype.hasOwnProperty.call(sanityChapterCacheRef.current, chapterNumber)) return;
-      fetch(`/api/sanity/chapter?chapterNumber=${chapterNumber}`)
-        .then((r) => parseJsonSafe(r))
-        .then((payload) => {
-          const data = (payload?.chapter ?? payload?.data ?? null) as SanityChapterContent | null;
-          sanityChapterCacheRef.current[chapterNumber] = data;
-        })
-        .catch(() => {
-          // ignore prefetch failure
-        });
+      fetchSanityChapterWithCache(chapterNumber).catch(() => {
+        // ignore prefetch failure
+      });
     });
   }, [activeIndex, activeSection.type, sequence]);
 
@@ -1435,12 +1489,34 @@ export default function App() {
     setTimeout(scrollNow, 180);
   };
 
-  const handleStartChatVoice = () => {
+  const handleStartChatVoice = async () => {
+    if (chatListening) {
+      try {
+        chatRecognitionRef.current?.stop?.();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    setChatVoiceError("");
+
     const w = window as any;
     const Recognition = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!Recognition) {
-      alert("ഈ ബ്രൗസറിൽ voice input പിന്തുണയില്ല. ദയവായി text ആയി ചോദിക്കുക.");
+      setChatVoiceSupported(false);
+      setChatVoiceError("ഈ ഫോണിലെ ബ്രൗസറിൽ voice input പിന്തുണയില്ല. ദയവായി ടെക്സ്റ്റായി ചോദിക്കുക.");
+      return;
+    }
+
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    } catch {
+      setChatVoiceError("മൈക്ക് അനുമതി ലഭിച്ചില്ല. Browser settings-ൽ microphone അനുവദിക്കുക.");
       return;
     }
 
@@ -1454,19 +1530,64 @@ export default function App() {
     rec.lang = "ml-IN";
     rec.interimResults = false;
     rec.maxAlternatives = 1;
+    rec.continuous = true;
 
-    rec.onstart = () => setChatListening(true);
-    rec.onerror = () => setChatListening(false);
-    rec.onend = () => setChatListening(false);
+    let safetyTimer: number | null = null;
+
+    rec.onstart = () => {
+      setChatListening(true);
+      setChatVoiceError("");
+      if (safetyTimer) window.clearTimeout(safetyTimer);
+      safetyTimer = window.setTimeout(() => {
+        try {
+          rec.stop();
+        } catch {
+          // ignore
+        }
+      }, 12000);
+    };
+
+    rec.onerror = (event: any) => {
+      setChatListening(false);
+      const code = String(event?.error || "");
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setChatVoiceError("മൈക്ക് അനുമതി നിഷേധിച്ചു. Browser settings-ൽ microphone അനുവദിക്കുക.");
+      } else if (code === "no-speech") {
+        setChatVoiceError("ശബ്ദം കേൾക്കാനായില്ല. വീണ്ടും വ്യക്തമായി സംസാരിക്കുക.");
+      } else {
+        setChatVoiceError("Voice input പ്രവർത്തിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.");
+      }
+    };
+
+    rec.onend = () => {
+      setChatListening(false);
+      if (safetyTimer) {
+        window.clearTimeout(safetyTimer);
+        safetyTimer = null;
+      }
+    };
+
     rec.onresult = (event: any) => {
-      const spoken = String(event?.results?.[0]?.[0]?.transcript || "").trim();
+      const resultIndex = Number(event?.resultIndex || 0);
+      const spoken = String(event?.results?.[resultIndex]?.[0]?.transcript || event?.results?.[0]?.[0]?.transcript || "").trim();
       if (spoken) {
         setChatInput((prev) => (prev ? `${prev} ${spoken}` : spoken));
+      }
+      try {
+        rec.stop();
+      } catch {
+        // ignore
       }
     };
 
     chatRecognitionRef.current = rec;
-    rec.start();
+
+    try {
+      rec.start();
+    } catch {
+      setChatListening(false);
+      setChatVoiceError("Voice input ആരംഭിക്കാനായില്ല. വീണ്ടും ശ്രമിക്കുക.");
+    }
   };
 
   const handleSendChatMessage = async () => {
@@ -2710,29 +2831,35 @@ export default function App() {
               {chatLoading && <div className="text-[11px] text-text-muted font-serif animate-pulse">മറുപടി തയ്യാറാക്കുന്നു...</div>}
             </div>
 
-            <div className="p-2.5 border-t border-border-main bg-bg-subcard flex items-center gap-1.5">
-              <button
-                onClick={handleStartChatVoice}
-                className={`p-2 rounded-lg border ${chatListening ? "border-accent-main bg-accent-main/20 text-accent-light" : "border-border-main bg-bg-card text-text-muted"}`}
-                title="Malayalam voice input"
-              >
-                <Mic className="w-4 h-4" />
-              </button>
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={handleChatInputKeyDown}
-                placeholder={chatListening ? "കേൾക്കുന്നു..." : "ചോദ്യം ചോദിക്കൂ..."}
-                className="flex-1 px-3 py-2 rounded-lg border border-border-main bg-bg-card text-text-title text-sm outline-none focus:border-accent-main"
-              />
-              <button
-                onClick={handleSendChatMessage}
-                disabled={chatLoading || !chatInput.trim()}
-                className="p-2 rounded-lg bg-accent-main text-black disabled:opacity-50"
-                title="Send"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+            <div className="p-2.5 border-t border-border-main bg-bg-subcard space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleStartChatVoice}
+                  disabled={!chatVoiceSupported}
+                  className={`p-2 rounded-lg border ${chatListening ? "border-accent-main bg-accent-main/20 text-accent-light" : "border-border-main bg-bg-card text-text-muted"} ${!chatVoiceSupported ? "opacity-40 cursor-not-allowed" : ""}`}
+                  title="Malayalam voice input"
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={handleChatInputKeyDown}
+                  placeholder={chatListening ? "കേൾക്കുന്നു..." : "ചോദ്യം ചോദിക്കൂ..."}
+                  className="flex-1 px-3 py-2 rounded-lg border border-border-main bg-bg-card text-text-title text-sm outline-none focus:border-accent-main"
+                />
+                <button
+                  onClick={handleSendChatMessage}
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="p-2 rounded-lg bg-accent-main text-black disabled:opacity-50"
+                  title="Send"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+              {chatVoiceError && (
+                <p className="text-[10px] text-red-400 font-serif px-1">{chatVoiceError}</p>
+              )}
             </div>
           </div>
         )}

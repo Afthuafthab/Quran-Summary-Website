@@ -48,6 +48,14 @@ type BetaReport = {
 
 const AUTHOR_WHATSAPP = "919961170582";
 
+type ChapterCacheEntry = {
+  chapter: any | null;
+  expiresAt: number;
+};
+
+const chapterResponseCache = new Map<number, ChapterCacheEntry>();
+const CHAPTER_CACHE_TTL_MS = 1000 * 60 * 20;
+
 const isBookTopicQuery = (text: string) => {
   const q = text.toLowerCase();
   return /(സൂറത്ത്|സൂരത്ത്|അധ്യായം|വചനം|ഖുർആൻ|quran|surah|verse|tafsir|തഫ്സീർ|പ്രവാച|allah|islam)/i.test(q);
@@ -169,6 +177,13 @@ const getApp = async () => {
         return res.status(400).json({ status: "error", message: "chapterNumber is required" });
       }
 
+      const now = Date.now();
+      const cached = chapterResponseCache.get(chapterNumber);
+      if (cached && cached.expiresAt > now) {
+        res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1200, stale-while-revalidate=86400");
+        return res.json({ status: "success", chapter: cached.chapter, cache: "hit" });
+      }
+
       try {
         const chapter = await sanityClient.fetch(
           `*[
@@ -199,7 +214,12 @@ const getApp = async () => {
           return res.status(404).json({ status: "error", message: "Chapter not found" });
         }
 
-        return res.json({ status: "success", chapter });
+        chapterResponseCache.set(chapterNumber, {
+          chapter,
+          expiresAt: now + CHAPTER_CACHE_TTL_MS,
+        });
+        res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1200, stale-while-revalidate=86400");
+        return res.json({ status: "success", chapter, cache: "miss" });
       } catch (error) {
         console.error("Sanity chapter fetch error:", error);
         return res.status(500).json({ status: "error", message: "Failed to fetch chapter" });
