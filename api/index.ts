@@ -58,7 +58,36 @@ const CHAPTER_CACHE_TTL_MS = 1000 * 60 * 20;
 
 const isBookTopicQuery = (text: string) => {
   const q = text.toLowerCase();
-  return /(സൂറത്ത്|സൂരത്ത്|അധ്യായം|വചനം|ഖുർആൻ|quran|surah|verse|tafsir|തഫ്സീർ|പ്രവാച|allah|islam)/i.test(q);
+  return /(സൂറത്ത്|സൂരത്ത്|അധ്യായം|വചനം|ആയത്ത്|ഖുർആൻ|quran|surah|sura|chapter|verse|ayah|tafsir|തഫ്സീർ|പ്രവാച|allah|islam)/i.test(q);
+};
+
+const isContextualBookFollowup = (text: string) => {
+  const q = text.toLowerCase();
+  const hasContextWord = /(ഇത്|ഇവിടെ|ഇപ്പൊ|ഈ ഭാഗം|this|here|current|that chapter|this chapter|this surah)/i.test(q);
+  const hasQuestionCue = /(എന്ത്|എങ്ങനെ|ആര്|ഏത്|എവിടെ|why|what|how|which|who|where)/i.test(q);
+  const hasAyahPattern = /(\d+\s*[:.]\s*\d+)/.test(q);
+  return hasAyahPattern || (hasContextWord && hasQuestionCue);
+};
+
+const isGreetingOrSmallTalk = (text: string) => {
+  const q = text.toLowerCase().trim();
+  return /^(hi|hello|hey|yo|good morning|good evening|good night|how are you|what'?s up|hlo|hai|ഹായ്|ഹലോ|സുഖമാണോ|എന്താ വിശേഷം|സുഖം ആണോ)/i.test(q);
+};
+
+const buildGeneralChatReply = (text: string) => {
+  const hasMalayalam = /[\u0D00-\u0D7F]/.test(text);
+  const hasLatin = /[A-Za-z]/.test(text);
+  const preferEnglish = hasLatin && !hasMalayalam;
+
+  if (isGreetingOrSmallTalk(text)) {
+    return preferEnglish
+      ? "Hi! I’m doing well 😊 I can reply in English too. Ask me anything — and for Quran/surah questions I can give direct references."
+      : "ഹായ്! സുഖം ആണ് 😊 മലയാളത്തിലോ ഇംഗ്ലീഷിലോ ചോദിക്കാം. സൂറത്ത്/ഖുർആൻ ചോദ്യങ്ങൾക്ക് റഫറൻസോടുകൂടി സഹായിക്കാം.";
+  }
+
+  return preferEnglish
+    ? "I can reply in English too. Ask your question normally. If it is about Quran/surah, I will provide matched references."
+    : "സാധാരണ ചോദ്യങ്ങൾക്കും ഞാൻ മറുപടി നൽകും. ഖുർആൻ/സൂറത്ത് സംബന്ധിച്ച ചോദ്യമാണെങ്കിൽ അനുയോജ്യമായ റഫറൻസുകളും നൽകാം.";
 };
 
 const tokenizeQuery = (text: string) =>
@@ -235,10 +264,23 @@ const getApp = async () => {
         return res.status(400).json({ status: "error", message: "Message is required" });
       }
 
+      const relatedToBook = isBookTopicQuery(message) || isContextualBookFollowup(message);
+
+      if (!relatedToBook) {
+        return res.json({
+          status: "success",
+          canAnswer: true,
+          escalateToAuthor: false,
+          answer: buildGeneralChatReply(message),
+          references: [],
+          whatsappUrl: "",
+          draftQuestionForAuthor: "",
+        });
+      }
+
       const references = await getChatReferences(message);
-      const relatedToBook = isBookTopicQuery(message) || Boolean(activeSectionTitle) || Number.isFinite(activeSurahId);
       const canAnswer = references.length > 0 && references[0].score >= 1;
-      const escalateToAuthor = relatedToBook && !canAnswer;
+      const escalateToAuthor = !canAnswer;
 
       const contextLabel = activeSectionTitle
         ? `നിലവിലെ അധ്യായം: ${activeSectionTitle}${Number.isFinite(activeSurahId) && activeSurahId > 0 ? ` (സൂറത്ത് ${activeSurahId})` : ""}`
@@ -260,9 +302,7 @@ const getApp = async () => {
           status: "success",
           canAnswer: false,
           escalateToAuthor,
-          answer: escalateToAuthor
-            ? "ഈ ചോദ്യത്തിന് കൃത്യമായ മറുപടി ഇപ്പോൾ ലഭ്യമല്ല. ഗ്രന്ഥകർത്താവിനോട് നേരിട്ട് ചോദിക്കാം."
-            : "ഖുർആൻ സംക്ഷിപ്ത അവലോകനവുമായി ബന്ധപ്പെട്ട ചോദ്യങ്ങൾ ചോദിക്കൂ. ഞാൻ ബന്ധപ്പെട്ട വചനങ്ങൾ കണ്ടെത്തി സഹായിക്കും.",
+          answer: "ഈ ചോദ്യത്തിന് കൃത്യമായ മറുപടി ഇപ്പോൾ ലഭ്യമല്ല. ഗ്രന്ഥകർത്താവിനോട് നേരിട്ട് ചോദിക്കാം.",
           references: [],
           whatsappUrl,
           draftQuestionForAuthor,
