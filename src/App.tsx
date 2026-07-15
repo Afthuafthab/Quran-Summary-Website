@@ -1511,16 +1511,6 @@ export default function App() {
     }
 
     try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop());
-      }
-    } catch {
-      setChatVoiceError("മൈക്ക് അനുമതി ലഭിച്ചില്ല. Browser settings-ൽ microphone അനുവദിക്കുക.");
-      return;
-    }
-
-    try {
       chatRecognitionRef.current?.stop?.();
     } catch {
       // ignore
@@ -1528,9 +1518,9 @@ export default function App() {
 
     const rec = new Recognition();
     rec.lang = "ml-IN";
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.maxAlternatives = 1;
-    rec.continuous = true;
+    rec.continuous = false;
 
     let safetyTimer: number | null = null;
 
@@ -1550,10 +1540,14 @@ export default function App() {
     rec.onerror = (event: any) => {
       setChatListening(false);
       const code = String(event?.error || "");
-      if (code === "not-allowed" || code === "service-not-allowed") {
-        setChatVoiceError("മൈക്ക് അനുമതി നിഷേധിച്ചു. Browser settings-ൽ microphone അനുവദിക്കുക.");
+      if (code === "not-allowed") {
+        setChatVoiceError("മൈക്ക് അനുമതി അനുവദിച്ചിട്ടുണ്ടോ എന്ന് പരിശോധിക്കൂ. അനുവദിച്ചതിന് ശേഷവും ഇതേ പിശക് വന്നാൽ ഈ ബ്രൗസറിൽ voice recognition പിന്തുണ പരിമിതമായിരിക്കാം.");
+      } else if (code === "service-not-allowed") {
+        setChatVoiceError("ഈ ബ്രൗസറിൽ voice recognition service പ്രവർത്തിക്കുന്നില്ല. Chrome (Android) / Safari (iOS latest) ഉപയോഗിച്ച് വീണ്ടും ശ്രമിക്കുക.");
       } else if (code === "no-speech") {
         setChatVoiceError("ശബ്ദം കേൾക്കാനായില്ല. വീണ്ടും വ്യക്തമായി സംസാരിക്കുക.");
+      } else if (code === "network") {
+        setChatVoiceError("നെറ്റ്വർക്ക് പ്രശ്നം കാരണം voice input ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.");
       } else {
         setChatVoiceError("Voice input പ്രവർത്തിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.");
       }
