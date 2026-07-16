@@ -90,6 +90,35 @@ const buildGeneralChatReply = (text: string) => {
     : "സാധാരണ ചോദ്യങ്ങൾക്കും ഞാൻ മറുപടി നൽകും. ഖുർആൻ/സൂറത്ത് സംബന്ധിച്ച ചോദ്യമാണെങ്കിൽ അനുയോജ്യമായ റഫറൻസുകളും നൽകാം.";
 };
 
+const CROSS_SCRIPT_TO_MALAYALAM: Record<string, string> = {
+  // Devanagari
+  "व": "വ", "ि": "ി", "श": "ശ", "्": "്", "ा": "ാ", "त": "ത", "स": "സ", "ु": "ു", "न": "ന", "प": "പ",
+  "ृ": "ൃ", "ओ": "ഓ", "ं": "ം", "ध": "ധ", "य": "യ", "र": "ര",
+  // Tamil
+  "வ": "വ", "ி": "ി", "ு": "ു", "க": "ക", "ள": "ള", "்": "്", "ம": "മ", "ப": "പ", "ொ": "ൊ",
+  // Kannada
+  "ವ": "വ", "ಿ": "ി", "ಶ": "ശ", "ಸ": "സ", "ಪ": "പ", "್": "്", "ರ": "ര",
+  // Gurmukhi
+  "ਖ": "ഖ",
+  // Gujarati
+  "ભ": "ഭ", "સ": "സ", "્": "്",
+  // Bengali
+  "া": "ാ", "ম": "മ", "ক": "ക", "ব": "ബ", "ি": "ി", "ভ": "ഭ", "গ": "ഗ", "ন": "ന", "ু": "ു", "ষ": "ഷ",
+  "ে": "േ", "আ": "ആ", "্": "്", "র": "ര", "ণ": "ണ",
+};
+
+const sanitizeMalayalamText = (input: string) => {
+  const text = String(input || "");
+  const replaced = text.replace(/[\u0900-\u0CFF]/g, (ch) => CROSS_SCRIPT_TO_MALAYALAM[ch] ?? "");
+  return replaced
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim();
+};
+
 const tokenizeQuery = (text: string) =>
   text
     .toLowerCase()
@@ -119,7 +148,7 @@ const getChatReferences = async (query: string) => {
 
     for (const doc of docs || []) {
       const surahId = Number(doc?.surahNumber ?? doc?.chapterNumber);
-      const raw = String(doc?.content || doc?.body || "");
+      const raw = sanitizeMalayalamText(String(doc?.content || doc?.body || ""));
       if (!raw) continue;
 
       const lines = raw.split(/\r?\n/).map((x: string) => x.trim()).filter(Boolean);
@@ -243,12 +272,21 @@ const getApp = async () => {
           return res.status(404).json({ status: "error", message: "Chapter not found" });
         }
 
+        const sanitizedChapter = {
+          ...chapter,
+          title: sanitizeMalayalamText(String(chapter.title || "")),
+          titleMal: sanitizeMalayalamText(String(chapter.titleMal || "")),
+          summary: sanitizeMalayalamText(String(chapter.summary || "")),
+          content: sanitizeMalayalamText(String(chapter.content || "")),
+          body: sanitizeMalayalamText(String(chapter.body || "")),
+        };
+
         chapterResponseCache.set(chapterNumber, {
-          chapter,
+          chapter: sanitizedChapter,
           expiresAt: now + CHAPTER_CACHE_TTL_MS,
         });
         res.setHeader("Cache-Control", "public, max-age=300, s-maxage=1200, stale-while-revalidate=86400");
-        return res.json({ status: "success", chapter, cache: "miss" });
+        return res.json({ status: "success", chapter: sanitizedChapter, cache: "miss" });
       } catch (error) {
         console.error("Sanity chapter fetch error:", error);
         return res.status(500).json({ status: "error", message: "Failed to fetch chapter" });
